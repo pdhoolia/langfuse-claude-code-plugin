@@ -1,0 +1,10 @@
+{
+  "name": "langfuse-tracing",
+  "description": "Trace Claude Code conversations, tool calls, subagent executions, and context compaction to Langfuse",
+  "version": "0.1.0",
+  "author": {
+    "name": "Pankaj Dhoolia"
+  },
+  "homepage": "https://langfuse.com",
+  "repository": "https://github.com/pdhoolia/langfuse-claude-code-plugin"
+}
