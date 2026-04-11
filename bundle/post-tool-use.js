@@ -1,0 +1,208 @@
+#!/usr/bin/env node
+
+// dist/hooks/post-tool-use.js
+import { randomUUID } from "node:crypto";
+
+// dist/logger.js
+import { appendFileSync, mkdirSync, statSync, renameSync } from "node:fs";
+import { dirname } from "node:path";
+var MAX_LOG_BYTES = 5 * 1024 * 1024;
+var LOG_FILE =
+  process.env.CC_LANGFUSE_LOG_FILE ?? `${process.env.HOME ?? ""}/.claude/state/langfuse_hook.log`;
+var debugEnabled = false;
+function initLogger(debug2) {
+  debugEnabled = debug2;
+  mkdirSync(dirname(LOG_FILE), { recursive: true });
+}
+function rotateIfNeeded() {
+  try {
+    if (statSync(LOG_FILE).size >= MAX_LOG_BYTES) {
+      renameSync(LOG_FILE, `${LOG_FILE}.1`);
+    }
+  } catch {}
+}
+function write(level, message) {
+  const timestamp = /* @__PURE__ */ new Date().toISOString().replace("T", " ").replace("Z", "");
+  const line = `${timestamp} [${level}] ${message}
+`;
+  try {
+    rotateIfNeeded();
+    appendFileSync(LOG_FILE, line);
+  } catch {}
+}
+function error(message) {
+  write("ERROR", message);
+}
+function debug(message) {
+  if (debugEnabled) {
+    write("DEBUG", message);
+  }
+}
+
+// dist/state.js
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync as mkdirSync2,
+  openSync,
+  closeSync,
+  unlinkSync,
+} from "node:fs";
+import { dirname as dirname2 } from "node:path";
+var LOCK_TIMEOUT_MS = 5e3;
+var LOCK_RETRY_MS = 20;
+function lockPath(stateFilePath) {
+  return `${stateFilePath}.lock`;
+}
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+async function acquireLock(stateFilePath) {
+  const lock = lockPath(stateFilePath);
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  mkdirSync2(dirname2(stateFilePath), { recursive: true });
+  while (Date.now() < deadline) {
+    try {
+      const fd = openSync(lock, "wx");
+      closeSync(fd);
+      return;
+    } catch {
+      await sleep(LOCK_RETRY_MS);
+    }
+  }
+  try {
+    unlinkSync(lock);
+  } catch {}
+}
+function releaseLock(stateFilePath) {
+  try {
+    unlinkSync(lockPath(stateFilePath));
+  } catch {}
+}
+async function atomicUpdateState(stateFilePath, fn) {
+  await acquireLock(stateFilePath);
+  try {
+    const state = loadState(stateFilePath);
+    writeFileSync(stateFilePath, JSON.stringify(fn(state), null, 2));
+  } finally {
+    releaseLock(stateFilePath);
+  }
+}
+function loadState(stateFilePath) {
+  try {
+    const raw = readFileSync(stateFilePath, "utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+function getSessionState(state, sessionId) {
+  return (
+    state[sessionId] ?? {
+      last_line: -1,
+      turn_count: 0,
+      updated: "",
+      task_run_map: {},
+    }
+  );
+}
+var SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1e3;
+
+// dist/config.js
+function loadConfig() {
+  const publicKey = process.env.CC_LANGFUSE_PUBLIC_KEY ?? process.env.LANGFUSE_PUBLIC_KEY ?? "";
+  const secretKey = process.env.CC_LANGFUSE_SECRET_KEY ?? process.env.LANGFUSE_SECRET_KEY ?? "";
+  const baseUrl =
+    process.env.CC_LANGFUSE_BASE_URL ??
+    process.env.LANGFUSE_BASE_URL ??
+    "https://cloud.langfuse.com";
+  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  const stateFilePath = process.env.STATE_FILE ?? `${homeDir}/.claude/state/langfuse_state.json`;
+  const debug2 = (process.env.CC_LANGFUSE_DEBUG ?? "").toLowerCase() === "true";
+  const maxChars = parseInt(process.env.CC_LANGFUSE_MAX_CHARS ?? "50000", 10);
+  return { publicKey, secretKey, baseUrl, stateFilePath, debug: debug2, maxChars };
+}
+
+// dist/utils/hook-init.js
+function initHook() {
+  const config = loadConfig();
+  initLogger(config.debug);
+  if (process.env.TRACE_TO_LANGFUSE?.toLowerCase() !== "true") {
+    return null;
+  }
+  if (!config.publicKey || !config.secretKey) {
+    error(
+      "No Langfuse credentials set (CC_LANGFUSE_PUBLIC_KEY/CC_LANGFUSE_SECRET_KEY or LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY)",
+    );
+    return null;
+  }
+  return config;
+}
+
+// dist/utils/stdin.js
+function readStdin() {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    process.stdin.setEncoding("utf-8");
+    process.stdin.on("data", (chunk) => (data += chunk));
+    process.stdin.on("end", () => {
+      try {
+        resolve(JSON.parse(data));
+      } catch (err) {
+        reject(new Error(`Failed to parse hook input: ${err}`));
+      }
+    });
+    process.stdin.on("error", reject);
+  });
+}
+
+// dist/hooks/post-tool-use.js
+async function main() {
+  const input = await readStdin();
+  const config = initHook();
+  if (!config) return;
+  if (input.agent_id || input.agent_type) {
+    debug("Skipping PostToolUse for subagent tool \u2014 Stop hook handles tracing");
+    return;
+  }
+  const toolEndTime = Date.now();
+  const agentId = input.tool_response.agentId;
+  if (agentId) {
+    debug(`Agent tool detected, deferring observation creation for ${agentId}`);
+  }
+  const startTime = Date.now();
+  await atomicUpdateState(config.stateFilePath, (freshState) => {
+    const freshSession = getSessionState(freshState, input.session_id);
+    const toolStartTime = freshSession.tool_start_times?.[input.tool_use_id] ?? startTime;
+    return {
+      ...freshState,
+      [input.session_id]: {
+        ...freshSession,
+        last_tool_end_time: toolEndTime,
+        ...(agentId
+          ? {
+              task_run_map: {
+                ...freshSession.task_run_map,
+                [agentId]: {
+                  observation_id: randomUUID(),
+                  deferred: {
+                    tool_name: input.tool_name,
+                    tool_input: input.tool_input,
+                    tool_output: input.tool_response,
+                    start_time: toolStartTime,
+                    end_time: toolEndTime,
+                  },
+                },
+              },
+            }
+          : {}),
+      },
+    };
+  });
+}
+main().catch((err) => {
+  try {
+    error(`PostToolUse hook fatal error: ${err}`);
+  } catch {}
+  process.exit(0);
+});
