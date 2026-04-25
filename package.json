@@ -1,6 +1,6 @@
 {
   "name": "langfuse-claude-code-plugin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Langfuse observability plugin for tracing Claude Code conversations",
   "type": "module",
   "main": "dist/index.js",

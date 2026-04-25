@@ -95,6 +95,47 @@ export LANGFUSE_SECRET_KEY=sk-lf-...
 4. **SubagentStop** queues subagent transcript paths; **Stop** reads and traces them.
 5. State is persisted to `~/.claude/state/langfuse_state.json` with atomic file locking.
 
+## Recording feedback
+
+Two slash commands let you attach thumbs-up/down scores to either the most recent
+completed turn or the entire current session. Both write **idempotent ±1 scores**
+to Langfuse — re-invoking on the same target overwrites the previous score, so
+mistakes are correctable in place.
+
+```text
+/feedback up                            # +1 on the latest completed turn
+/feedback down                          # -1 on the latest completed turn
+/feedback up great answer               # with optional comment
+/feedback down output was truncated     # comment can contain spaces
+
+/journey up                             # +1 on the current session
+/journey down                           # -1 on the current session
+/journey up wrapped up cleanly          # with optional comment
+```
+
+Plugin-namespaced forms also work (`/langfuse-tracing:feedback up`, etc.).
+
+**Score schema:**
+
+| Score name         | Attached to | Value type | Value     |
+| ------------------ | ----------- | ---------- | --------- |
+| `turn_feedback`    | Trace       | NUMERIC    | `+1`/`-1` |
+| `session_feedback` | Session     | NUMERIC    | `+1`/`-1` |
+
+**Score IDs are deterministic** — derived from `sha256(target_id:score_name)`
+and formatted as a UUID. Same scheme as the offline scorer in
+`context-gateway/.../session_scoring.py`, so an offline scorer can update the
+same row by computing the same ID.
+
+**Behavior notes:**
+
+- Both commands silently exit if `TRACE_TO_LANGFUSE` isn't `true`.
+- Both commands need at least one substantive turn to have completed in the
+  current session — invoking before that prints a friendly hint.
+- Slash command turns themselves are not traced (they would otherwise appear
+  as their own meaningless traces and confuse the targeting of subsequent
+  invocations).
+
 ## Development
 
 ```bash
@@ -118,6 +159,27 @@ export CC_LANGFUSE_DEBUG=true
 # View logs
 tail -f ~/.claude/state/langfuse_hook.log
 ```
+
+## Migrating from v0.1.x to v0.2.0
+
+**What's new:** Two slash commands — `/feedback up|down [comment]` and
+`/journey up|down [comment]` — write idempotent ±1 scores to Langfuse
+attached to the current turn or session. See _Recording feedback_ above.
+
+**Breaking change (low impact):** Hook bundle paths moved from
+`bundle/<name>.js` to `bundle/hooks/<name>.js` so the new
+`bundle/commands/<name>.js` files have a clean home. The plugin's own
+`hooks/hooks.json` is updated in lockstep, so:
+
+- If you installed via the Claude Code marketplace or a `git pull`,
+  no action is needed beyond restarting Claude Code.
+- If your personal `~/.claude/settings.json` hardcodes hook paths
+  (most users do not), update each `bundle/<name>.js` reference to
+  `bundle/hooks/<name>.js`.
+
+State files (`~/.claude/state/langfuse_state.json`) carry over without
+modification. Two new optional fields are added on demand by the v0.2.0
+hooks; the next turn after upgrade populates them automatically.
 
 ## Migration from the Python hook
 
