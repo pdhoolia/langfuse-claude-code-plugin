@@ -11,13 +11,14 @@
  */
 
 import { randomUUID } from "node:crypto";
-import Langfuse from "langfuse";
+import { realpathSync } from "node:fs";
 import { debug, error } from "../logger.js";
 import { initClient, closeInterruptedTurn, flushTraces, setMaxChars } from "../langfuse.js";
-import { loadState, atomicUpdateState, getSessionState } from "../state.js";
+import { loadState, atomicUpdateState, getSessionState, setActiveByCwd } from "../state.js";
 import { getTranscriptEndLine } from "../transcript.js";
 import { initHook, expandHome } from "../utils/hook-init.js";
 import { readStdin } from "../utils/stdin.js";
+import { isFeedbackCommand } from "../scoring/match.js";
 
 interface UserPromptSubmitHookInput {
   session_id: string;
@@ -42,6 +43,26 @@ async function main(): Promise<void> {
   // Subagent turns are traced entirely by the Stop hook from the transcript.
   if (input.agent_id || input.agent_type) {
     debug("Skipping UserPromptSubmit for subagent — Stop hook handles tracing");
+    return;
+  }
+
+  // Always claim cwd → session ownership for slash-command lookup (FR-4 / ADR-006).
+  // This must happen even for feedback commands; the lookup map is purely about
+  // "which session is active in this cwd", not about turn type.
+  const realCwd = safeRealpath(input.cwd);
+  await atomicUpdateState(config.stateFilePath, (s) =>
+    setActiveByCwd(s, realCwd, input.session_id),
+  );
+
+  // ADR-002: feedback turns (/feedback, /journey) skip trace allocation entirely.
+  // Stop will see no current_trace_id and gracefully no-op (advancing last_line).
+  // Without this, last_substantive_trace_id would drift to point at the feedback
+  // turn itself, breaking the targeting semantics for the next /feedback.
+  if (isFeedbackCommand(input.prompt)) {
+    debug(
+      `Feedback command detected (prompt prefix: ${input.prompt.split(/\s/)[0]}); ` +
+        `skipping trace allocation`,
+    );
     return;
   }
 
@@ -121,6 +142,15 @@ async function main(): Promise<void> {
 
   const duration = ((Date.now() - hookStartTime) / 1000).toFixed(1);
   debug(`UserPromptSubmit hook completed in ${duration}s`);
+}
+
+/** realpathSync but never throws — falls back to the input on failure. */
+function safeRealpath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }
 
 main().catch((err) => {

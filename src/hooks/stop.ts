@@ -23,7 +23,8 @@ import {
 } from "../langfuse.js";
 import { initHook, expandHome } from "../utils/hook-init.js";
 import { readStdin } from "../utils/stdin.js";
-import type { StopHookInput } from "../types.js";
+import { isFeedbackCommand } from "../scoring/match.js";
+import type { StopHookInput, ContentBlock } from "../types.js";
 
 async function main(): Promise<void> {
   const startTime = Date.now();
@@ -69,6 +70,25 @@ async function main(): Promise<void> {
         return { ...s, [input.session_id]: { ...ss, current_trace_id: undefined } };
       });
     }
+    return;
+  }
+
+  // ADR-002 / EIS §3.9(a): if UserPromptSubmit skipped trace allocation (because
+  // the prompt was a /feedback or /journey command), there's nothing to emit.
+  // Just advance last_line past the feedback turn so the next Stop doesn't
+  // reprocess it.
+  if (!sessionState.current_trace_id) {
+    debug(
+      `No current_trace_id — likely a feedback turn. ` +
+        `Advancing last_line ${sessionState.last_line} → ${lastLine} and exiting.`,
+    );
+    await atomicUpdateState(config.stateFilePath, (s) => {
+      const ss = getSessionState(s, input.session_id);
+      return {
+        ...s,
+        [input.session_id]: { ...ss, last_line: lastLine, updated: new Date().toISOString() },
+      };
+    });
     return;
   }
 
@@ -142,6 +162,26 @@ async function main(): Promise<void> {
     });
   }
 
+  // ADR-003 / EIS §3.9(b): promote current_trace_id → last_substantive_trace_id
+  // when the last traced turn was a real user turn (not a feedback command).
+  // The defensive double-check on the user content covers the (paranoid) case
+  // that a feedback turn somehow slipped through the UserPromptSubmit filter.
+  let promoteTraceId: string | undefined = undefined;
+  if (tracedTurns > 0 && currentTraceId) {
+    const lastTurn = turns[turns.length - 1];
+    const userText =
+      typeof lastTurn.userContent === "string"
+        ? lastTurn.userContent
+        : extractText(lastTurn.userContent as unknown as ContentBlock[]);
+    if (!isFeedbackCommand(userText)) {
+      promoteTraceId = currentTraceId;
+    } else {
+      debug(
+        "Last turn looked like a feedback command (defensive check); not promoting last_substantive_trace_id",
+      );
+    }
+  }
+
   // Save updated state
   const savedLastLine = tracedTurns > 0 ? lastLine : sessionState.last_line;
   await atomicUpdateState(config.stateFilePath, (latestState) => {
@@ -154,6 +194,8 @@ async function main(): Promise<void> {
         turn_count: latestSession.turn_count + tracedTurns,
         updated: new Date().toISOString(),
         current_trace_id: undefined,
+        // Promote substantive trace; preserve previous value when this turn wasn't substantive.
+        last_substantive_trace_id: promoteTraceId ?? latestSession.last_substantive_trace_id,
         pending_subagent_traces: [],
         tool_start_times: {},
         task_run_map: {},

@@ -4,8 +4,7 @@
 import { appendFileSync, mkdirSync, statSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 var MAX_LOG_BYTES = 5 * 1024 * 1024;
-var LOG_FILE =
-  process.env.CC_LANGFUSE_LOG_FILE ?? `${process.env.HOME ?? ""}/.claude/state/langfuse_hook.log`;
+var LOG_FILE = process.env.CC_LANGFUSE_LOG_FILE ?? `${process.env.HOME ?? ""}/.claude/state/langfuse_hook.log`;
 var debugEnabled = false;
 function initLogger(debug2) {
   debugEnabled = debug2;
@@ -16,16 +15,18 @@ function rotateIfNeeded() {
     if (statSync(LOG_FILE).size >= MAX_LOG_BYTES) {
       renameSync(LOG_FILE, `${LOG_FILE}.1`);
     }
-  } catch {}
+  } catch {
+  }
 }
 function write(level, message) {
-  const timestamp = /* @__PURE__ */ new Date().toISOString().replace("T", " ").replace("Z", "");
+  const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace("T", " ").replace("Z", "");
   const line = `${timestamp} [${level}] ${message}
 `;
   try {
     rotateIfNeeded();
     appendFileSync(LOG_FILE, line);
-  } catch {}
+  } catch {
+  }
 }
 function warn(message) {
   write("WARN", message);
@@ -39,13 +40,37 @@ function debug(message) {
   }
 }
 
+// dist/config.js
+function loadConfig() {
+  const publicKey = process.env.CC_LANGFUSE_PUBLIC_KEY ?? process.env.LANGFUSE_PUBLIC_KEY ?? "";
+  const secretKey = process.env.CC_LANGFUSE_SECRET_KEY ?? process.env.LANGFUSE_SECRET_KEY ?? "";
+  const baseUrl = process.env.CC_LANGFUSE_BASE_URL ?? process.env.LANGFUSE_BASE_URL ?? "https://cloud.langfuse.com";
+  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  const stateFilePath = process.env.STATE_FILE ?? `${homeDir}/.claude/state/langfuse_state.json`;
+  const debug2 = (process.env.CC_LANGFUSE_DEBUG ?? "").toLowerCase() === "true";
+  const maxChars = parseInt(process.env.CC_LANGFUSE_MAX_CHARS ?? "50000", 10);
+  return { publicKey, secretKey, baseUrl, stateFilePath, debug: debug2, maxChars };
+}
+
+// dist/utils/hook-init.js
+function initHook() {
+  const config = loadConfig();
+  initLogger(config.debug);
+  if (process.env.TRACE_TO_LANGFUSE?.toLowerCase() !== "true") {
+    return null;
+  }
+  if (!config.publicKey || !config.secretKey) {
+    error("No Langfuse credentials set (CC_LANGFUSE_PUBLIC_KEY/CC_LANGFUSE_SECRET_KEY or LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY)");
+    return null;
+  }
+  return config;
+}
+
 // node_modules/.pnpm/mustache@4.2.0/node_modules/mustache/mustache.mjs
 var objectToString = Object.prototype.toString;
-var isArray =
-  Array.isArray ||
-  function isArrayPolyfill(object) {
-    return objectToString.call(object) === "[object Array]";
-  };
+var isArray = Array.isArray || function isArrayPolyfill(object) {
+  return objectToString.call(object) === "[object Array]";
+};
 function isFunction(object) {
   return typeof object === "function";
 }
@@ -53,18 +78,13 @@ function typeStr(obj) {
   return isArray(obj) ? "array" : typeof obj;
 }
 function escapeRegExp(string) {
-  return string.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
+  return string.replace(/[\-\[\]{}()*+?.,\\\^$|#\s]/g, "\\$&");
 }
 function hasProperty(obj, propName) {
   return obj != null && typeof obj === "object" && propName in obj;
 }
 function primitiveHasOwnProperty(primitive, propName) {
-  return (
-    primitive != null &&
-    typeof primitive !== "object" &&
-    primitive.hasOwnProperty &&
-    primitive.hasOwnProperty(propName)
-  );
+  return primitive != null && typeof primitive !== "object" && primitive.hasOwnProperty && primitive.hasOwnProperty(propName);
 }
 var regExpTest = RegExp.prototype.test;
 function testRegExp(re, string) {
@@ -82,10 +102,10 @@ var entityMap = {
   "'": "&#39;",
   "/": "&#x2F;",
   "`": "&#x60;",
-  "=": "&#x3D;",
+  "=": "&#x3D;"
 };
 function escapeHtml(string) {
-  return String(string).replace(/[&<>"'`=/]/g, function fromEntityMap(s) {
+  return String(string).replace(/[&<>"'`=\/]/g, function fromEntityMap(s) {
     return entityMap[s];
   });
 }
@@ -95,7 +115,8 @@ var equalsRe = /\s*=/;
 var curlyRe = /\s*\}/;
 var tagRe = /#|\^|\/|>|\{|&|=|!/;
 function parseTemplate(template, tags) {
-  if (!template) return [];
+  if (!template)
+    return [];
   var lineHasNonSpace = false;
   var sections = [];
   var tokens = [];
@@ -106,7 +127,8 @@ function parseTemplate(template, tags) {
   var tagIndex = 0;
   function stripSpace() {
     if (hasTag && !nonSpace) {
-      while (spaces.length) delete tokens[spaces.pop()];
+      while (spaces.length)
+        delete tokens[spaces.pop()];
     } else {
       spaces = [];
     }
@@ -115,7 +137,8 @@ function parseTemplate(template, tags) {
   }
   var openingTagRe, closingTagRe, closingCurlyRe;
   function compileTags(tagsToCompile) {
-    if (typeof tagsToCompile === "string") tagsToCompile = tagsToCompile.split(spaceRe, 2);
+    if (typeof tagsToCompile === "string")
+      tagsToCompile = tagsToCompile.split(spaceRe, 2);
     if (!isArray(tagsToCompile) || tagsToCompile.length !== 2)
       throw new Error("Invalid tags: " + tagsToCompile);
     openingTagRe = new RegExp(escapeRegExp(tagsToCompile[0]) + "\\s*");
@@ -149,7 +172,8 @@ function parseTemplate(template, tags) {
         }
       }
     }
-    if (!scanner.scan(openingTagRe)) break;
+    if (!scanner.scan(openingTagRe))
+      break;
     hasTag = true;
     type = scanner.scan(tagRe) || "name";
     scanner.scan(whiteRe);
@@ -165,7 +189,8 @@ function parseTemplate(template, tags) {
     } else {
       value = scanner.scanUntil(closingTagRe);
     }
-    if (!scanner.scan(closingTagRe)) throw new Error("Unclosed tag at " + scanner.pos);
+    if (!scanner.scan(closingTagRe))
+      throw new Error("Unclosed tag at " + scanner.pos);
     if (type == ">") {
       token = [type, value, start, scanner.pos, indentation, tagIndex, lineHasNonSpace];
     } else {
@@ -177,7 +202,8 @@ function parseTemplate(template, tags) {
       sections.push(token);
     } else if (type === "/") {
       openSection = sections.pop();
-      if (!openSection) throw new Error('Unopened section "' + value + '" at ' + start);
+      if (!openSection)
+        throw new Error('Unopened section "' + value + '" at ' + start);
       if (openSection[1] !== value)
         throw new Error('Unclosed section "' + openSection[1] + '" at ' + start);
     } else if (type === "name" || type === "{" || type === "&") {
@@ -188,7 +214,8 @@ function parseTemplate(template, tags) {
   }
   stripSpace();
   openSection = sections.pop();
-  if (openSection) throw new Error('Unclosed section "' + openSection[1] + '" at ' + scanner.pos);
+  if (openSection)
+    throw new Error('Unclosed section "' + openSection[1] + '" at ' + scanner.pos);
   return nestTokens(squashTokens(tokens));
 }
 function squashTokens(tokens) {
@@ -243,15 +270,15 @@ Scanner.prototype.eos = function eos() {
 };
 Scanner.prototype.scan = function scan(re) {
   var match = this.tail.match(re);
-  if (!match || match.index !== 0) return "";
+  if (!match || match.index !== 0)
+    return "";
   var string = match[0];
   this.tail = this.tail.substring(string.length);
   this.pos += string.length;
   return string;
 };
 Scanner.prototype.scanUntil = function scanUntil(re) {
-  var index = this.tail.search(re),
-    match;
+  var index = this.tail.search(re), match;
   switch (index) {
     case -1:
       match = this.tail;
@@ -281,11 +308,7 @@ Context.prototype.lookup = function lookup(name) {
   if (cache.hasOwnProperty(name)) {
     value = cache[name];
   } else {
-    var context = this,
-      intermediateValue,
-      names,
-      index,
-      lookupHit = false;
+    var context = this, intermediateValue, names, index, lookupHit = false;
     while (context) {
       if (name.indexOf(".") > 0) {
         intermediateValue = context.view;
@@ -293,9 +316,7 @@ Context.prototype.lookup = function lookup(name) {
         index = 0;
         while (intermediateValue != null && index < names.length) {
           if (index === names.length - 1)
-            lookupHit =
-              hasProperty(intermediateValue, names[index]) ||
-              primitiveHasOwnProperty(intermediateValue, names[index]);
+            lookupHit = hasProperty(intermediateValue, names[index]) || primitiveHasOwnProperty(intermediateValue, names[index]);
           intermediateValue = intermediateValue[names[index++]];
         }
       } else {
@@ -310,7 +331,8 @@ Context.prototype.lookup = function lookup(name) {
     }
     cache[name] = value;
   }
-  if (isFunction(value)) value = value.call(this.view);
+  if (isFunction(value))
+    value = value.call(this.view);
   return value;
 };
 function Writer() {
@@ -324,7 +346,7 @@ function Writer() {
     },
     clear: function clear() {
       this._cache = {};
-    },
+    }
   };
 }
 Writer.prototype.clearCache = function clearCache() {
@@ -349,38 +371,25 @@ Writer.prototype.render = function render(template, view, partials, config) {
   var context = view instanceof Context ? view : new Context(view, void 0);
   return this.renderTokens(tokens, context, partials, template, config);
 };
-Writer.prototype.renderTokens = function renderTokens(
-  tokens,
-  context,
-  partials,
-  originalTemplate,
-  config,
-) {
+Writer.prototype.renderTokens = function renderTokens(tokens, context, partials, originalTemplate, config) {
   var buffer = "";
   var token, symbol, value;
   for (var i = 0, numTokens = tokens.length; i < numTokens; ++i) {
     value = void 0;
     token = tokens[i];
     symbol = token[0];
-    if (symbol === "#")
-      value = this.renderSection(token, context, partials, originalTemplate, config);
-    else if (symbol === "^")
-      value = this.renderInverted(token, context, partials, originalTemplate, config);
+    if (symbol === "#") value = this.renderSection(token, context, partials, originalTemplate, config);
+    else if (symbol === "^") value = this.renderInverted(token, context, partials, originalTemplate, config);
     else if (symbol === ">") value = this.renderPartial(token, context, partials, config);
     else if (symbol === "&") value = this.unescapedValue(token, context);
     else if (symbol === "name") value = this.escapedValue(token, context, config);
     else if (symbol === "text") value = this.rawValue(token);
-    if (value !== void 0) buffer += value;
+    if (value !== void 0)
+      buffer += value;
   }
   return buffer;
 };
-Writer.prototype.renderSection = function renderSection(
-  token,
-  context,
-  partials,
-  originalTemplate,
-  config,
-) {
+Writer.prototype.renderSection = function renderSection(token, context, partials, originalTemplate, config) {
   var self = this;
   var buffer = "";
   var value = context.lookup(token[1]);
@@ -390,13 +399,7 @@ Writer.prototype.renderSection = function renderSection(
   if (!value) return;
   if (isArray(value)) {
     for (var j = 0, valueLength = value.length; j < valueLength; ++j) {
-      buffer += this.renderTokens(
-        token[4],
-        context.push(value[j]),
-        partials,
-        originalTemplate,
-        config,
-      );
+      buffer += this.renderTokens(token[4], context.push(value[j]), partials, originalTemplate, config);
     }
   } else if (typeof value === "object" || typeof value === "string" || typeof value === "number") {
     buffer += this.renderTokens(token[4], context.push(value), partials, originalTemplate, config);
@@ -404,21 +407,16 @@ Writer.prototype.renderSection = function renderSection(
     if (typeof originalTemplate !== "string")
       throw new Error("Cannot use higher-order sections without the original template");
     value = value.call(context.view, originalTemplate.slice(token[3], token[5]), subRender);
-    if (value != null) buffer += value;
+    if (value != null)
+      buffer += value;
   } else {
     buffer += this.renderTokens(token[4], context, partials, originalTemplate, config);
   }
   return buffer;
 };
-Writer.prototype.renderInverted = function renderInverted(
-  token,
-  context,
-  partials,
-  originalTemplate,
-  config,
-) {
+Writer.prototype.renderInverted = function renderInverted(token, context, partials, originalTemplate, config) {
   var value = context.lookup(token[1]);
-  if (!value || (isArray(value) && value.length === 0))
+  if (!value || isArray(value) && value.length === 0)
     return this.renderTokens(token[4], context, partials, originalTemplate, config);
 };
 Writer.prototype.indentPartial = function indentPartial(partial, indentation, lineHasNonSpace) {
@@ -449,7 +447,8 @@ Writer.prototype.renderPartial = function renderPartial(token, context, partials
 };
 Writer.prototype.unescapedValue = function unescapedValue(token, context) {
   var value = context.lookup(token[1]);
-  if (value != null) return value;
+  if (value != null)
+    return value;
 };
 Writer.prototype.escapedValue = function escapedValue(token, context, config) {
   var escape = this.getConfigEscape(config) || mustache.escape;
@@ -500,7 +499,7 @@ var mustache = {
    */
   get templateCache() {
     return defaultWriter.templateCache;
-  },
+  }
 };
 var defaultWriter = new Writer();
 mustache.clearCache = function clearCache2() {
@@ -511,11 +510,7 @@ mustache.parse = function parse2(template, tags) {
 };
 mustache.render = function render2(template, view, partials, config) {
   if (typeof template !== "string") {
-    throw new TypeError(
-      'Invalid template! Template should be a "string" but "' +
-        typeStr(template) +
-        '" was given as the first argument for mustache#render(template, view, partials)',
-    );
+    throw new TypeError('Invalid template! Template should be a "string" but "' + typeStr(template) + '" was given as the first argument for mustache#render(template, view, partials)');
   }
   return defaultWriter.render(template, view, partials, config);
 };
@@ -574,13 +569,11 @@ var LangfusePromptCache = class {
   }
   addRefreshingPromise(key, promise) {
     this._refreshingKeys.set(key, promise);
-    promise
-      .then(() => {
-        this._refreshingKeys.delete(key);
-      })
-      .catch(() => {
-        this._refreshingKeys.delete(key);
-      });
+    promise.then(() => {
+      this._refreshingKeys.delete(key);
+    }).catch(() => {
+      this._refreshingKeys.delete(key);
+    });
   }
   isRefreshing(key) {
     return this._refreshingKeys.has(key);
@@ -595,17 +588,17 @@ var LangfusePromptCache = class {
   }
 };
 var LangfusePersistedProperty;
-(function (LangfusePersistedProperty2) {
+(function(LangfusePersistedProperty2) {
   LangfusePersistedProperty2["Props"] = "props";
   LangfusePersistedProperty2["Queue"] = "queue";
   LangfusePersistedProperty2["OptedOut"] = "opted_out";
 })(LangfusePersistedProperty || (LangfusePersistedProperty = {}));
 var ChatMessageType;
-(function (ChatMessageType2) {
+(function(ChatMessageType2) {
   ChatMessageType2["ChatMessage"] = "chatmessage";
   ChatMessageType2["Placeholder"] = "placeholder";
 })(ChatMessageType || (ChatMessageType = {}));
-mustache_default.escape = function (text) {
+mustache_default.escape = function(text) {
   return text;
 };
 var BasePromptClient = class {
@@ -695,7 +688,7 @@ var TextPromptClient = class extends BasePromptClient {
       tags: this.tags,
       labels: this.labels,
       type: this.type,
-      config: this.config,
+      config: this.config
     });
   }
 };
@@ -704,7 +697,7 @@ var ChatPromptClient = class _ChatPromptClient extends BasePromptClient {
     const normalizedPrompt = _ChatPromptClient.normalizePrompt(prompt.prompt);
     const typedPrompt = {
       ...prompt,
-      prompt: normalizedPrompt,
+      prompt: normalizedPrompt
     };
     super(typedPrompt, isFallback, "chat");
     this.promptResponse = typedPrompt;
@@ -717,7 +710,7 @@ var ChatPromptClient = class _ChatPromptClient extends BasePromptClient {
       } else {
         return {
           type: ChatMessageType.ChatMessage,
-          ...item,
+          ...item
         };
       }
     });
@@ -728,15 +721,9 @@ var ChatPromptClient = class _ChatPromptClient extends BasePromptClient {
     for (const item of this.prompt) {
       if ("type" in item && item.type === ChatMessageType.Placeholder) {
         const placeholderValue = placeholderValues[item.name];
-        if (
-          Array.isArray(placeholderValue) &&
-          placeholderValue.length > 0 &&
-          placeholderValue.every(
-            (msg) => typeof msg === "object" && "role" in msg && "content" in msg,
-          )
-        ) {
+        if (Array.isArray(placeholderValue) && placeholderValue.length > 0 && placeholderValue.every((msg) => typeof msg === "object" && "role" in msg && "content" in msg)) {
           messagesWithPlaceholdersReplaced.push(...placeholderValue);
-        } else if (Array.isArray(placeholderValue) && placeholderValue.length === 0);
+        } else if (Array.isArray(placeholderValue) && placeholderValue.length === 0) ;
         else if (placeholderValue !== void 0) {
           messagesWithPlaceholdersReplaced.push(JSON.stringify(placeholderValue));
         } else {
@@ -745,7 +732,7 @@ var ChatPromptClient = class _ChatPromptClient extends BasePromptClient {
       } else if ("role" in item && "content" in item && item.type === ChatMessageType.ChatMessage) {
         messagesWithPlaceholdersReplaced.push({
           role: item.role,
-          content: item.content,
+          content: item.content
         });
       }
     }
@@ -753,7 +740,7 @@ var ChatPromptClient = class _ChatPromptClient extends BasePromptClient {
       if (typeof item === "object" && item !== null && "role" in item && "content" in item) {
         return {
           ...item,
-          content: mustache_default.render(item.content, variables ?? {}),
+          content: mustache_default.render(item.content, variables ?? {})
         };
       } else {
         return item;
@@ -766,34 +753,26 @@ var ChatPromptClient = class _ChatPromptClient extends BasePromptClient {
     for (const item of this.prompt) {
       if ("type" in item && item.type === ChatMessageType.Placeholder) {
         const placeholderValue = placeholderValues[item.name];
-        if (
-          Array.isArray(placeholderValue) &&
-          placeholderValue.length > 0 &&
-          placeholderValue.every(
-            (msg) => typeof msg === "object" && "role" in msg && "content" in msg,
-          )
-        ) {
-          messagesWithPlaceholdersReplaced.push(
-            ...placeholderValue.map((msg) => {
-              return {
-                role: msg.role,
-                content: this._transformToLangchainVariables(msg.content),
-              };
-            }),
-          );
-        } else if (Array.isArray(placeholderValue) && placeholderValue.length === 0);
+        if (Array.isArray(placeholderValue) && placeholderValue.length > 0 && placeholderValue.every((msg) => typeof msg === "object" && "role" in msg && "content" in msg)) {
+          messagesWithPlaceholdersReplaced.push(...placeholderValue.map((msg) => {
+            return {
+              role: msg.role,
+              content: this._transformToLangchainVariables(msg.content)
+            };
+          }));
+        } else if (Array.isArray(placeholderValue) && placeholderValue.length === 0) ;
         else if (placeholderValue !== void 0) {
           messagesWithPlaceholdersReplaced.push(JSON.stringify(placeholderValue));
         } else {
           messagesWithPlaceholdersReplaced.push({
             variableName: item.name,
-            optional: false,
+            optional: false
           });
         }
       } else if ("role" in item && "content" in item && item.type === ChatMessageType.ChatMessage) {
         messagesWithPlaceholdersReplaced.push({
           role: item.role,
-          content: this._transformToLangchainVariables(item.content),
+          content: this._transformToLangchainVariables(item.content)
         });
       }
     }
@@ -804,7 +783,10 @@ var ChatPromptClient = class _ChatPromptClient extends BasePromptClient {
       name: this.name,
       prompt: this.promptResponse.prompt.map((item) => {
         if ("type" in item && item.type === ChatMessageType.ChatMessage) {
-          const { type: _, ...messageWithoutType } = item;
+          const {
+            type: _,
+            ...messageWithoutType
+          } = item;
           return messageWithoutType;
         }
         return item;
@@ -814,7 +796,7 @@ var ChatPromptClient = class _ChatPromptClient extends BasePromptClient {
       tags: this.tags,
       labels: this.labels,
       type: this.type,
-      config: this.config,
+      config: this.config
     });
   }
 };
@@ -827,7 +809,11 @@ function removeTrailingSlash(url) {
   return url?.replace(/\/+$/, "");
 }
 async function retriable(fn, props = {}, log2) {
-  const { retryCount = 3, retryDelay = 5e3, retryCheck = () => true } = props;
+  const {
+    retryCount = 3,
+    retryDelay = 5e3,
+    retryCheck = () => true
+  } = props;
   let lastError = null;
   for (let i = 0; i < retryCount + 1; i++) {
     if (i > 0) {
@@ -848,30 +834,25 @@ async function retriable(fn, props = {}, log2) {
   throw lastError;
 }
 function generateUUID(globalThis2) {
-  let d = /* @__PURE__ */ new Date().getTime();
-  let d2 =
-    (globalThis2 &&
-      globalThis2.performance &&
-      globalThis2.performance.now &&
-      globalThis2.performance.now() * 1e3) ||
-    0;
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+  let d = (/* @__PURE__ */ new Date()).getTime();
+  let d2 = globalThis2 && globalThis2.performance && globalThis2.performance.now && globalThis2.performance.now() * 1e3 || 0;
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function(c) {
     let r = Math.random() * 16;
     if (d > 0) {
-      r = ((d + r) % 16) | 0;
+      r = (d + r) % 16 | 0;
       d = Math.floor(d / 16);
     } else {
-      r = ((d2 + r) % 16) | 0;
+      r = (d2 + r) % 16 | 0;
       d2 = Math.floor(d2 / 16);
     }
-    return (c === "x" ? r : (r & 3) | 8).toString(16);
+    return (c === "x" ? r : r & 3 | 8).toString(16);
   });
 }
 function currentTimestamp() {
-  return /* @__PURE__ */ new Date().getTime();
+  return (/* @__PURE__ */ new Date()).getTime();
 }
 function currentISOTime() {
-  return /* @__PURE__ */ new Date().toISOString();
+  return (/* @__PURE__ */ new Date()).toISOString();
 }
 function safeSetTimeout(fn, timeout) {
   const t = setTimeout(fn, timeout);
@@ -887,22 +868,24 @@ function getEnv(key) {
   return;
 }
 function configLangfuseSDK(params, secretRequired = true) {
-  const { publicKey, secretKey, ...coreOptions } = params ?? {};
+  const {
+    publicKey,
+    secretKey,
+    ...coreOptions
+  } = params ?? {};
   const finalPublicKey = publicKey ?? getEnv("LANGFUSE_PUBLIC_KEY");
-  const finalSecretKey = secretRequired ? (secretKey ?? getEnv("LANGFUSE_SECRET_KEY")) : void 0;
+  const finalSecretKey = secretRequired ? secretKey ?? getEnv("LANGFUSE_SECRET_KEY") : void 0;
   const finalBaseUrl = coreOptions.baseUrl ?? getEnv("LANGFUSE_BASEURL");
   const finalCoreOptions = {
     ...coreOptions,
-    baseUrl: finalBaseUrl,
+    baseUrl: finalBaseUrl
   };
   return {
     publicKey: finalPublicKey,
-    ...(secretRequired
-      ? {
-          secretKey: finalSecretKey,
-        }
-      : void 0),
-    ...finalCoreOptions,
+    ...secretRequired ? {
+      secretKey: finalSecretKey
+    } : void 0,
+    ...finalCoreOptions
   };
 }
 var encodeQueryParams = (params) => {
@@ -929,7 +912,7 @@ var utils = /* @__PURE__ */ Object.freeze({
   getEnv,
   removeTrailingSlash,
   retriable,
-  safeSetTimeout,
+  safeSetTimeout
 });
 var common_release_envs = [
   // Vercel
@@ -950,7 +933,7 @@ var common_release_envs = [
   // Heroku
   "SOURCE_VERSION",
   // Trigger.dev
-  "TRIGGER_DEPLOYMENT_ID",
+  "TRIGGER_DEPLOYMENT_ID"
 ];
 function getCommonReleaseEnvs() {
   for (const key of common_release_envs) {
@@ -970,25 +953,27 @@ var dynamicImport = (module) => {
   );
 };
 if (typeof globalThis.Deno !== "undefined") {
-  Promise.all([dynamicImport("node:fs"), dynamicImport("node:crypto")])
-    .then(([importedFs, importedCrypto]) => {
-      fs = importedFs;
-      cryptoModule = importedCrypto;
-    })
-    .catch();
+  Promise.all([dynamicImport("node:fs"), dynamicImport("node:crypto")]).then(([importedFs, importedCrypto]) => {
+    fs = importedFs;
+    cryptoModule = importedCrypto;
+  }).catch();
 } else if (typeof process !== "undefined" && process.versions?.node) {
-  Promise.all([dynamicImport("fs"), dynamicImport("crypto")])
-    .then(([importedFs, importedCrypto]) => {
-      fs = importedFs;
-      cryptoModule = importedCrypto;
-    })
-    .catch();
+  Promise.all([dynamicImport("fs"), dynamicImport("crypto")]).then(([importedFs, importedCrypto]) => {
+    fs = importedFs;
+    cryptoModule = importedCrypto;
+  }).catch();
 } else if (typeof crypto !== "undefined") {
   cryptoModule = crypto;
 }
 var LangfuseMedia = class _LangfuseMedia {
   constructor(params) {
-    const { obj, base64DataUri, contentType, contentBytes, filePath } = params;
+    const {
+      obj,
+      base64DataUri,
+      contentType,
+      contentBytes,
+      filePath
+    } = params;
     this.obj = obj;
     this._mediaId = void 0;
     if (base64DataUri) {
@@ -1011,9 +996,7 @@ var LangfuseMedia = class _LangfuseMedia {
       this._contentType = this._contentBytes ? contentType : void 0;
       this._source = this._contentBytes ? "file" : void 0;
     } else {
-      console.error(
-        "base64DataUri, or contentBytes and contentType, or filePath must be provided to LangfuseMedia",
-      );
+      console.error("base64DataUri, or contentBytes and contentType, or filePath must be provided to LangfuseMedia");
     }
   }
   readFile(filePath) {
@@ -1064,10 +1047,7 @@ var LangfuseMedia = class _LangfuseMedia {
       console.error("Crypto support is not available in this environment");
       return void 0;
     }
-    const sha256Hash = cryptoModule
-      .createHash("sha256")
-      .update(this._contentBytes)
-      .digest("base64");
+    const sha256Hash = cryptoModule.createHash("sha256").update(this._contentBytes).digest("base64");
     return sha256Hash;
   }
   toJSON() {
@@ -1109,7 +1089,7 @@ var LangfuseMedia = class _LangfuseMedia {
     return {
       mediaId: parsedData["id"],
       source: parsedData["source"],
-      contentType: parsedData["type"],
+      contentType: parsedData["type"]
     };
   }
   /**
@@ -1153,7 +1133,11 @@ var LangfuseMedia = class _LangfuseMedia {
    * ```
    */
   static async resolveMediaReferences(params) {
-    const { obj, langfuseClient, maxDepth = 10 } = params;
+    const {
+      obj,
+      langfuseClient,
+      maxDepth = 10
+    } = params;
     async function traverse(obj2, depth) {
       if (depth > maxDepth) {
         return obj2;
@@ -1166,36 +1150,25 @@ var LangfuseMedia = class _LangfuseMedia {
         }
         let result = obj2;
         const referenceStringToMediaContentMap = /* @__PURE__ */ new Map();
-        await Promise.all(
-          referenceStringMatches.map(async (referenceString) => {
-            try {
-              const parsedMediaReference = _LangfuseMedia.parseReferenceString(referenceString);
-              const mediaData = await langfuseClient.fetchMedia(parsedMediaReference.mediaId);
-              const mediaContent = await langfuseClient.fetch(mediaData.url, {
-                method: "GET",
-                headers: {},
-              });
-              if (mediaContent.status !== 200) {
-                throw new Error("Failed to fetch media content");
-              }
-              const base64MediaContent = Buffer.from(await mediaContent.arrayBuffer()).toString(
-                "base64",
-              );
-              const base64DataUri = `data:${mediaData.contentType};base64,${base64MediaContent}`;
-              referenceStringToMediaContentMap.set(referenceString, base64DataUri);
-            } catch (error2) {
-              console.warn(
-                "Error fetching media content for reference string",
-                referenceString,
-                error2,
-              );
+        await Promise.all(referenceStringMatches.map(async (referenceString) => {
+          try {
+            const parsedMediaReference = _LangfuseMedia.parseReferenceString(referenceString);
+            const mediaData = await langfuseClient.fetchMedia(parsedMediaReference.mediaId);
+            const mediaContent = await langfuseClient.fetch(mediaData.url, {
+              method: "GET",
+              headers: {}
+            });
+            if (mediaContent.status !== 200) {
+              throw new Error("Failed to fetch media content");
             }
-          }),
-        );
-        for (const [
-          referenceString,
-          base64MediaContent,
-        ] of referenceStringToMediaContentMap.entries()) {
+            const base64MediaContent = Buffer.from(await mediaContent.arrayBuffer()).toString("base64");
+            const base64DataUri = `data:${mediaData.contentType};base64,${base64MediaContent}`;
+            referenceStringToMediaContentMap.set(referenceString, base64DataUri);
+          } catch (error2) {
+            console.warn("Error fetching media content for reference string", referenceString, error2);
+          }
+        }));
+        for (const [referenceString, base64MediaContent] of referenceStringToMediaContentMap.entries()) {
           result = result.replaceAll(referenceString, base64MediaContent);
         }
         return result;
@@ -1204,14 +1177,7 @@ var LangfuseMedia = class _LangfuseMedia {
         return Promise.all(obj2.map(async (item) => await traverse(item, depth + 1)));
       }
       if (typeof obj2 === "object" && obj2 !== null) {
-        return Object.fromEntries(
-          await Promise.all(
-            Object.entries(obj2).map(async ([key, value]) => [
-              key,
-              await traverse(value, depth + 1),
-            ]),
-          ),
-        );
+        return Object.fromEntries(await Promise.all(Object.entries(obj2).map(async ([key, value]) => [key, await traverse(value, depth + 1)])));
       }
       return obj2;
     }
@@ -1234,19 +1200,15 @@ function simpleHash(str) {
   let hash = 0;
   const prime = 31;
   for (let i = 0; i < str.length; i++) {
-    hash = (hash * prime + str.charCodeAt(i)) >>> 0;
+    hash = hash * prime + str.charCodeAt(i) >>> 0;
   }
-  hash = ((hash >>> 16) ^ hash) * 73244475;
-  hash = ((hash >>> 16) ^ hash) * 73244475;
-  hash = (hash >>> 16) ^ hash;
+  hash = (hash >>> 16 ^ hash) * 73244475;
+  hash = (hash >>> 16 ^ hash) * 73244475;
+  hash = hash >>> 16 ^ hash;
   return Math.abs(hash) / 2147483647;
 }
-var MAX_EVENT_SIZE_BYTES = getEnv("LANGFUSE_MAX_EVENT_SIZE_BYTES")
-  ? Number(getEnv("LANGFUSE_MAX_EVENT_SIZE_BYTES"))
-  : 1e6;
-var MAX_BATCH_SIZE_BYTES = getEnv("LANGFUSE_MAX_BATCH_SIZE_BYTES")
-  ? Number(getEnv("LANGFUSE_MAX_BATCH_SIZE_BYTES"))
-  : 25e5;
+var MAX_EVENT_SIZE_BYTES = getEnv("LANGFUSE_MAX_EVENT_SIZE_BYTES") ? Number(getEnv("LANGFUSE_MAX_EVENT_SIZE_BYTES")) : 1e6;
+var MAX_BATCH_SIZE_BYTES = getEnv("LANGFUSE_MAX_BATCH_SIZE_BYTES") ? Number(getEnv("LANGFUSE_MAX_BATCH_SIZE_BYTES")) : 25e5;
 var ENVIRONMENT_PATTERN = /^(?!langfuse)[a-z0-9_-]+$/;
 var WHITELISTED_LANGFUSE_INTERNAL_ENVIRONMENTS = ["langfuse-prompt-experiment"];
 var LangfuseFetchHttpError = class extends Error {
@@ -1258,14 +1220,9 @@ var LangfuseFetchHttpError = class extends Error {
 };
 var LangfuseFetchNetworkError = class extends Error {
   constructor(error2) {
-    super(
-      "Network error while fetching Langfuse",
-      error2 instanceof Error
-        ? {
-            cause: error2,
-          }
-        : {},
-    );
+    super("Network error while fetching Langfuse", error2 instanceof Error ? {
+      cause: error2
+    } : {});
     this.error = error2;
     this.name = "LangfuseFetchNetworkError";
   }
@@ -1297,19 +1254,10 @@ var errorResponseByCode = /* @__PURE__ */ new Map([
   [504, `Gateway timeout. ${defaultServerErrorPrompt}`],
   [404, `Internal error occurred. ${defaultServerErrorPrompt}`],
   // Client error category: 4xx errors, excluding 404
-  [
-    400,
-    `Bad request. Please check your request for any missing or incorrect parameters. Refer to our API docs: ${API_DOCS_URL} for details.`,
-  ],
-  [
-    401,
-    `Unauthorized. Please check your public/private host settings. Refer to our installation and setup guide: ${INSTALLATION_DOCS_URL} for details on SDK configuration.`,
-  ],
-  [
-    403,
-    `Forbidden. Please check your access control settings. Refer to our RBAC docs: ${RBAC_DOCS_URL} for details.`,
-  ],
-  [429, `Rate limit exceeded. For more information on rate limits please see: ${RATE_LIMITS_URL}`],
+  [400, `Bad request. Please check your request for any missing or incorrect parameters. Refer to our API docs: ${API_DOCS_URL} for details.`],
+  [401, `Unauthorized. Please check your public/private host settings. Refer to our installation and setup guide: ${INSTALLATION_DOCS_URL} for details on SDK configuration.`],
+  [403, `Forbidden. Please check your access control settings. Refer to our RBAC docs: ${RBAC_DOCS_URL} for details.`],
+  [429, `Rate limit exceeded. For more information on rate limits please see: ${RATE_LIMITS_URL}`]
 ]);
 function getErrorResponseByCode(code) {
   if (!code) {
@@ -1337,12 +1285,16 @@ var LangfuseCoreStateless = class {
     this.pendingIngestionPromises = {};
     this.localEventExportMap = /* @__PURE__ */ new Map();
     this._events = new SimpleEventEmitter();
-    const { publicKey, secretKey, enabled, _projectId, _isLocalEventExportEnabled, ...options } =
-      params;
+    const {
+      publicKey,
+      secretKey,
+      enabled,
+      _projectId,
+      _isLocalEventExportEnabled,
+      ...options
+    } = params;
     this._events.on("error", (payload) => {
-      console.error(
-        `[Langfuse SDK] ${typeof payload === "string" ? payload : JSON.stringify(payload)}`,
-      );
+      console.error(`[Langfuse SDK] ${typeof payload === "string" ? payload : JSON.stringify(payload)}`);
     });
     this.enabled = enabled === false ? false : true;
     this.publicKey = publicKey ?? "";
@@ -1351,52 +1303,30 @@ var LangfuseCoreStateless = class {
     this.additionalHeaders = options?.additionalHeaders || {};
     this.flushAt = options?.flushAt ? Math.max(options?.flushAt, 1) : 15;
     this.flushInterval = options?.flushInterval ?? 1e4;
-    this.release =
-      options?.release ?? getEnv("LANGFUSE_RELEASE") ?? getCommonReleaseEnvs() ?? void 0;
+    this.release = options?.release ?? getEnv("LANGFUSE_RELEASE") ?? getCommonReleaseEnvs() ?? void 0;
     this.mask = options?.mask;
-    this.sampleRate =
-      options?.sampleRate ??
-      (getEnv("LANGFUSE_SAMPLE_RATE") ? Number(getEnv("LANGFUSE_SAMPLE_RATE")) : void 0);
+    this.sampleRate = options?.sampleRate ?? (getEnv("LANGFUSE_SAMPLE_RATE") ? Number(getEnv("LANGFUSE_SAMPLE_RATE")) : void 0);
     if (this.sampleRate) {
-      this._events.emit(
-        "debug",
-        `Langfuse trace sampling enabled with sampleRate ${this.sampleRate}.`,
-      );
+      this._events.emit("debug", `Langfuse trace sampling enabled with sampleRate ${this.sampleRate}.`);
     }
     this.environment = options?.environment ?? getEnv("LANGFUSE_TRACING_ENVIRONMENT");
-    if (
-      this.environment &&
-      !(
-        ENVIRONMENT_PATTERN.test(this.environment) ||
-        WHITELISTED_LANGFUSE_INTERNAL_ENVIRONMENTS.includes(this.environment)
-      ) &&
-      !_isLocalEventExportEnabled
-    ) {
-      this._events.emit(
-        "error",
-        `Invalid tracing environment set: ${this.environment} . Environment must match regex ${ENVIRONMENT_PATTERN}. Events will be rejected by Langfuse server.`,
-      );
+    if (this.environment && !(ENVIRONMENT_PATTERN.test(this.environment) || WHITELISTED_LANGFUSE_INTERNAL_ENVIRONMENTS.includes(this.environment)) && !_isLocalEventExportEnabled) {
+      this._events.emit("error", `Invalid tracing environment set: ${this.environment} . Environment must match regex ${ENVIRONMENT_PATTERN}. Events will be rejected by Langfuse server.`);
     }
     this._retryOptions = {
       retryCount: options?.fetchRetryCount ?? 3,
       retryDelay: options?.fetchRetryDelay ?? 3e3,
-      retryCheck: isLangfuseFetchError,
+      retryCheck: isLangfuseFetchError
     };
     this.requestTimeout = options?.requestTimeout ?? 5e3;
     this.sdkIntegration = options?.sdkIntegration ?? "DEFAULT";
     this.isLocalEventExportEnabled = _isLocalEventExportEnabled ?? false;
     if (this.isLocalEventExportEnabled && !_projectId) {
-      this._events.emit(
-        "error",
-        "Local event export is enabled, but no project ID was provided. Disabling local export.",
-      );
+      this._events.emit("error", "Local event export is enabled, but no project ID was provided. Disabling local export.");
       this.isLocalEventExportEnabled = false;
       return;
     } else if (!this.isLocalEventExportEnabled && _projectId) {
-      this._events.emit(
-        "error",
-        "Local event export is disabled, but a project ID was provided. Disabling local export.",
-      );
+      this._events.emit("error", "Local event export is disabled, but a project ID was provided. Disabling local export.");
       this.isLocalEventExportEnabled = false;
       return;
     } else {
@@ -1409,7 +1339,7 @@ var LangfuseCoreStateless = class {
   getCommonEventProperties() {
     return {
       $lib: this.getLibraryId(),
-      $lib_version: this.getLibraryVersion(),
+      $lib_version: this.getLibraryVersion()
     };
   }
   on(event, cb) {
@@ -1431,7 +1361,12 @@ var LangfuseCoreStateless = class {
    *** Handlers for each object type
    ***/
   traceStateless(body) {
-    const { id: bodyId, timestamp: bodyTimestamp, release: bodyRelease, ...rest } = body;
+    const {
+      id: bodyId,
+      timestamp: bodyTimestamp,
+      release: bodyRelease,
+      ...rest
+    } = body;
     const id = bodyId ?? generateUUID();
     const release = bodyRelease ?? this.release;
     const parsedBody = {
@@ -1439,62 +1374,75 @@ var LangfuseCoreStateless = class {
       release,
       timestamp: bodyTimestamp ?? /* @__PURE__ */ new Date(),
       environment: this.environment,
-      ...rest,
+      ...rest
     };
     this.enqueue("trace-create", parsedBody);
     return id;
   }
   eventStateless(body) {
-    const { id: bodyId, startTime: bodyStartTime, ...rest } = body;
+    const {
+      id: bodyId,
+      startTime: bodyStartTime,
+      ...rest
+    } = body;
     const id = bodyId ?? generateUUID();
     const parsedBody = {
       id,
       startTime: bodyStartTime ?? /* @__PURE__ */ new Date(),
       environment: this.environment,
-      ...rest,
+      ...rest
     };
     this.enqueue("event-create", parsedBody);
     return id;
   }
   spanStateless(body) {
-    const { id: bodyId, startTime: bodyStartTime, ...rest } = body;
+    const {
+      id: bodyId,
+      startTime: bodyStartTime,
+      ...rest
+    } = body;
     const id = bodyId || generateUUID();
     const parsedBody = {
       id,
       startTime: bodyStartTime ?? /* @__PURE__ */ new Date(),
       environment: this.environment,
-      ...rest,
+      ...rest
     };
     this.enqueue("span-create", parsedBody);
     return id;
   }
   generationStateless(body) {
-    const { id: bodyId, startTime: bodyStartTime, prompt, ...rest } = body;
-    const promptDetails =
-      prompt && !prompt.isFallback
-        ? {
-            promptName: prompt.name,
-            promptVersion: prompt.version,
-          }
-        : {};
+    const {
+      id: bodyId,
+      startTime: bodyStartTime,
+      prompt,
+      ...rest
+    } = body;
+    const promptDetails = prompt && !prompt.isFallback ? {
+      promptName: prompt.name,
+      promptVersion: prompt.version
+    } : {};
     const id = bodyId || generateUUID();
     const parsedBody = {
       id,
       startTime: bodyStartTime ?? /* @__PURE__ */ new Date(),
       environment: this.environment,
       ...promptDetails,
-      ...rest,
+      ...rest
     };
     this.enqueue("generation-create", parsedBody);
     return id;
   }
   scoreStateless(body) {
-    const { id: bodyId, ...rest } = body;
+    const {
+      id: bodyId,
+      ...rest
+    } = body;
     const id = bodyId || generateUUID();
     const parsedBody = {
       id,
       environment: this.environment,
-      ...rest,
+      ...rest
     };
     this.enqueue("score-create", parsedBody);
     return id;
@@ -1504,29 +1452,26 @@ var LangfuseCoreStateless = class {
     return body.id;
   }
   updateGenerationStateless(body) {
-    const { prompt, ...rest } = body;
-    const promptDetails =
-      prompt && !prompt.isFallback
-        ? {
-            promptName: prompt.name,
-            promptVersion: prompt.version,
-          }
-        : {};
+    const {
+      prompt,
+      ...rest
+    } = body;
+    const promptDetails = prompt && !prompt.isFallback ? {
+      promptName: prompt.name,
+      promptVersion: prompt.version
+    } : {};
     const parsedBody = {
       ...promptDetails,
-      ...rest,
+      ...rest
     };
     this.enqueue("generation-update", parsedBody);
     return body.id;
   }
   async _getDataset(name) {
     const encodedName = encodeURIComponent(name);
-    return this.fetchAndLogErrors(
-      `${this.baseUrl}/api/public/v2/datasets/${encodedName}`,
-      this._getFetchOptions({
-        method: "GET",
-      }),
-    );
+    return this.fetchAndLogErrors(`${this.baseUrl}/api/public/v2/datasets/${encodedName}`, this._getFetchOptions({
+      method: "GET"
+    }));
   }
   async _getDatasetItems(query) {
     const params = new URLSearchParams();
@@ -1535,105 +1480,84 @@ var LangfuseCoreStateless = class {
         params.append(key, value.toString());
       }
     });
-    return this.fetchAndLogErrors(
-      `${this.baseUrl}/api/public/dataset-items?${params}`,
-      this._getFetchOptions({
-        method: "GET",
-      }),
-    );
+    return this.fetchAndLogErrors(`${this.baseUrl}/api/public/dataset-items?${params}`, this._getFetchOptions({
+      method: "GET"
+    }));
   }
   async _fetchMedia(id) {
-    return this.fetchAndLogErrors(
-      `${this.baseUrl}/api/public/media/${id}`,
-      this._getFetchOptions({
-        method: "GET",
-      }),
-    );
+    return this.fetchAndLogErrors(`${this.baseUrl}/api/public/media/${id}`, this._getFetchOptions({
+      method: "GET"
+    }));
   }
   async fetchTraces(query) {
-    const { data, meta } = await this.fetchAndLogErrors(
-      `${this.baseUrl}/api/public/traces?${encodeQueryParams(query)}`,
-      this._getFetchOptions({
-        method: "GET",
-      }),
-    );
+    const {
+      data,
+      meta
+    } = await this.fetchAndLogErrors(`${this.baseUrl}/api/public/traces?${encodeQueryParams(query)}`, this._getFetchOptions({
+      method: "GET"
+    }));
     return {
       data,
-      meta,
+      meta
     };
   }
   async fetchTrace(traceId) {
-    const res = await this.fetchAndLogErrors(
-      `${this.baseUrl}/api/public/traces/${traceId}`,
-      this._getFetchOptions({
-        method: "GET",
-      }),
-    );
+    const res = await this.fetchAndLogErrors(`${this.baseUrl}/api/public/traces/${traceId}`, this._getFetchOptions({
+      method: "GET"
+    }));
     return {
-      data: res,
+      data: res
     };
   }
   async fetchObservations(query) {
-    const { data, meta } = await this.fetchAndLogErrors(
-      `${this.baseUrl}/api/public/observations?${encodeQueryParams(query)}`,
-      this._getFetchOptions({
-        method: "GET",
-      }),
-    );
+    const {
+      data,
+      meta
+    } = await this.fetchAndLogErrors(`${this.baseUrl}/api/public/observations?${encodeQueryParams(query)}`, this._getFetchOptions({
+      method: "GET"
+    }));
     return {
       data,
-      meta,
+      meta
     };
   }
   async fetchObservation(observationId) {
-    const res = await this.fetchAndLogErrors(
-      `${this.baseUrl}/api/public/observations/${observationId}`,
-      this._getFetchOptions({
-        method: "GET",
-      }),
-    );
+    const res = await this.fetchAndLogErrors(`${this.baseUrl}/api/public/observations/${observationId}`, this._getFetchOptions({
+      method: "GET"
+    }));
     return {
-      data: res,
+      data: res
     };
   }
   async fetchSessions(query) {
-    const { data, meta } = await this.fetchAndLogErrors(
-      `${this.baseUrl}/api/public/sessions?${encodeQueryParams(query)}`,
-      this._getFetchOptions({
-        method: "GET",
-      }),
-    );
+    const {
+      data,
+      meta
+    } = await this.fetchAndLogErrors(`${this.baseUrl}/api/public/sessions?${encodeQueryParams(query)}`, this._getFetchOptions({
+      method: "GET"
+    }));
     return {
       data,
-      meta,
+      meta
     };
   }
   async getDatasetRun(params) {
     const encodedDatasetName = encodeURIComponent(params.datasetName);
     const encodedRunName = encodeURIComponent(params.runName);
-    return this.fetchAndLogErrors(
-      `${this.baseUrl}/api/public/datasets/${encodedDatasetName}/runs/${encodedRunName}`,
-      this._getFetchOptions({
-        method: "GET",
-      }),
-    );
+    return this.fetchAndLogErrors(`${this.baseUrl}/api/public/datasets/${encodedDatasetName}/runs/${encodedRunName}`, this._getFetchOptions({
+      method: "GET"
+    }));
   }
   async getDatasetRuns(datasetName, query) {
-    return this.fetchAndLogErrors(
-      `${this.baseUrl}/api/public/datasets/${encodeURIComponent(datasetName)}/runs?${encodeQueryParams(query)}`,
-      this._getFetchOptions({
-        method: "GET",
-      }),
-    );
+    return this.fetchAndLogErrors(`${this.baseUrl}/api/public/datasets/${encodeURIComponent(datasetName)}/runs?${encodeQueryParams(query)}`, this._getFetchOptions({
+      method: "GET"
+    }));
   }
   async createDatasetRunItem(body) {
-    return this.fetchAndLogErrors(
-      `${this.baseUrl}/api/public/dataset-run-items`,
-      this._getFetchOptions({
-        method: "POST",
-        body: JSON.stringify(body),
-      }),
-    );
+    return this.fetchAndLogErrors(`${this.baseUrl}/api/public/dataset-run-items`, this._getFetchOptions({
+      method: "POST",
+      body: JSON.stringify(body)
+    }));
   }
   /**
    * Creates a dataset. Upserts the dataset if it already exists.
@@ -1642,19 +1566,13 @@ var LangfuseCoreStateless = class {
    * @returns A promise that resolves to the response of the create operation.
    */
   async createDataset(dataset) {
-    const body =
-      typeof dataset === "string"
-        ? {
-            name: dataset,
-          }
-        : dataset;
-    return this.fetchAndLogErrors(
-      `${this.baseUrl}/api/public/datasets`,
-      this._getFetchOptions({
-        method: "POST",
-        body: JSON.stringify(body),
-      }),
-    );
+    const body = typeof dataset === "string" ? {
+      name: dataset
+    } : dataset;
+    return this.fetchAndLogErrors(`${this.baseUrl}/api/public/datasets`, this._getFetchOptions({
+      method: "POST",
+      body: JSON.stringify(body)
+    }));
   }
   /**
    * Creates a dataset item. Upserts the item if it already exists.
@@ -1662,21 +1580,15 @@ var LangfuseCoreStateless = class {
    * @returns A promise that resolves to the response of the create operation.
    */
   async createDatasetItem(body) {
-    return this.fetchAndLogErrors(
-      `${this.baseUrl}/api/public/dataset-items`,
-      this._getFetchOptions({
-        method: "POST",
-        body: JSON.stringify(body),
-      }),
-    );
+    return this.fetchAndLogErrors(`${this.baseUrl}/api/public/dataset-items`, this._getFetchOptions({
+      method: "POST",
+      body: JSON.stringify(body)
+    }));
   }
   async getDatasetItem(id) {
-    return this.fetchAndLogErrors(
-      `${this.baseUrl}/api/public/dataset-items/${id}`,
-      this._getFetchOptions({
-        method: "GET",
-      }),
-    );
+    return this.fetchAndLogErrors(`${this.baseUrl}/api/public/dataset-items/${id}`, this._getFetchOptions({
+      method: "GET"
+    }));
   }
   _parsePayload(response) {
     try {
@@ -1686,22 +1598,16 @@ var LangfuseCoreStateless = class {
     }
   }
   async createPromptStateless(body) {
-    return this.fetchAndLogErrors(
-      `${this.baseUrl}/api/public/v2/prompts`,
-      this._getFetchOptions({
-        method: "POST",
-        body: JSON.stringify(body),
-      }),
-    );
+    return this.fetchAndLogErrors(`${this.baseUrl}/api/public/v2/prompts`, this._getFetchOptions({
+      method: "POST",
+      body: JSON.stringify(body)
+    }));
   }
   async updatePromptStateless(body) {
-    return this.fetchAndLogErrors(
-      `${this.baseUrl}/api/public/v2/prompts/${encodeURIComponent(body.name)}/versions/${encodeURIComponent(body.version)}`,
-      this._getFetchOptions({
-        method: "PATCH",
-        body: JSON.stringify(body),
-      }),
-    );
+    return this.fetchAndLogErrors(`${this.baseUrl}/api/public/v2/prompts/${encodeURIComponent(body.name)}/versions/${encodeURIComponent(body.version)}`, this._getFetchOptions({
+      method: "PATCH",
+      body: JSON.stringify(body)
+    }));
   }
   async getPromptStateless(name, version2, label, maxRetries, requestTimeout) {
     const encodedName = encodeURIComponent(name);
@@ -1719,41 +1625,33 @@ var LangfuseCoreStateless = class {
     const boundedMaxRetries = this._getBoundedMaxRetries({
       maxRetries,
       defaultMaxRetries: 2,
-      maxRetriesUpperBound: 4,
+      maxRetriesUpperBound: 4
     });
     const retryOptions = {
       ...this._retryOptions,
       retryCount: boundedMaxRetries,
-      retryDelay: 500,
+      retryDelay: 500
     };
-    const retryLogger = (string) =>
-      this._events.emit("retry", string + ", " + url + ", " + JSON.stringify(retryOptions));
-    return retriable(
-      async () => {
-        const res = await this.fetch(
-          url,
-          this._getFetchOptions({
-            method: "GET",
-            fetchTimeout: requestTimeout ?? this.requestTimeout,
-          }),
-        ).catch((e) => {
-          if (e.name === "AbortError") {
-            throw new LangfuseFetchNetworkError("Fetch request timed out");
-          }
-          throw new LangfuseFetchNetworkError(e);
-        });
-        if (res.status >= 500) {
-          throw new LangfuseFetchHttpError(res, await res.text());
+    const retryLogger = (string) => this._events.emit("retry", string + ", " + url + ", " + JSON.stringify(retryOptions));
+    return retriable(async () => {
+      const res = await this.fetch(url, this._getFetchOptions({
+        method: "GET",
+        fetchTimeout: requestTimeout ?? this.requestTimeout
+      })).catch((e) => {
+        if (e.name === "AbortError") {
+          throw new LangfuseFetchNetworkError("Fetch request timed out");
         }
-        const data = await res.json();
-        return {
-          fetchResult: res.status === 200 ? "success" : "failure",
-          data,
-        };
-      },
-      retryOptions,
-      retryLogger,
-    );
+        throw new LangfuseFetchNetworkError(e);
+      });
+      if (res.status >= 500) {
+        throw new LangfuseFetchHttpError(res, await res.text());
+      }
+      const data = await res.json();
+      return {
+        fetchResult: res.status === 200 ? "success" : "failure",
+        data
+      };
+    }, retryOptions, retryLogger);
   }
   _getBoundedMaxRetries(params) {
     const defaultMaxRetries = Math.max(params.defaultMaxRetries ?? 2, 0);
@@ -1772,10 +1670,7 @@ var LangfuseCoreStateless = class {
     }
     const traceId = this.parseTraceId(type, body);
     if (!traceId) {
-      this._events.emit(
-        "warning",
-        "Failed to parse traceID for sampling. Please open a Github issue in https://github.com/langfuse/langfuse/issues/new/choose",
-      );
+      this._events.emit("warning", "Failed to parse traceID for sampling. Please open a Github issue in https://github.com/langfuse/langfuse/issues/new/choose");
     } else if (!isInSample(traceId, this.sampleRate)) {
       this._events.emit("debug", `Event with trace ID ${traceId} is out of sample. Skipping.`);
       return;
@@ -1783,13 +1678,11 @@ var LangfuseCoreStateless = class {
     const promise = this.processEnqueueEvent(type, body);
     const promiseId = generateUUID();
     this.pendingEventProcessingPromises[promiseId] = promise;
-    promise
-      .catch((e) => {
-        this._events.emit("error", e);
-      })
-      .finally(() => {
-        delete this.pendingEventProcessingPromises[promiseId];
-      });
+    promise.catch((e) => {
+      this._events.emit("error", e);
+    }).finally(() => {
+      delete this.pendingEventProcessingPromises[promiseId];
+    });
   }
   async processEnqueueEvent(type, body) {
     this.maskEventBodyInPlace(body);
@@ -1808,7 +1701,7 @@ var LangfuseCoreStateless = class {
       timestamp: currentISOTime(),
       body: finalEventBody,
       // TODO: fix typecast. EventBody is not correctly narrowed to the correct type dictated by the 'type' property. This should be part of a larger type cleanup.
-      metadata: void 0,
+      metadata: void 0
     });
     this.setPersistedProperty(LangfusePersistedProperty.Queue, queue);
     this._events.emit(type, finalEventBody);
@@ -1828,7 +1721,7 @@ var LangfuseCoreStateless = class {
       if (key in body) {
         try {
           body[key] = this.mask({
-            data: body[key],
+            data: body[key]
           });
         } catch (e) {
           this._events.emit("error", `Error masking ${key}: ${e}`);
@@ -1848,26 +1741,24 @@ var LangfuseCoreStateless = class {
     if (bodySize <= maxByteSize) {
       return body;
     }
-    this._events.emit(
-      "warning",
-      `Event Body is too large (${bodySize} bytes) and will be truncated`,
-    );
+    this._events.emit("warning", `Event Body is too large (${bodySize} bytes) and will be truncated`);
     const keysToCheck = ["input", "output", "metadata"];
-    const keySizes = keysToCheck
-      .map((key) => ({
-        key,
-        size: key in body ? this.getByteSize(body[key]) : 0,
-      }))
-      .sort((a, b) => b.size - a.size);
+    const keySizes = keysToCheck.map((key) => ({
+      key,
+      size: key in body ? this.getByteSize(body[key]) : 0
+    })).sort((a, b) => b.size - a.size);
     let result = {
-      ...body,
+      ...body
     };
     let currentSize = bodySize;
-    for (const { key, size } of keySizes) {
+    for (const {
+      key,
+      size
+    } of keySizes) {
       if (currentSize > maxByteSize && Object.prototype.hasOwnProperty.call(result, key)) {
         result = {
           ...result,
-          [key]: "<truncated due to size exceeding limit>",
+          [key]: "<truncated due to size exceeding limit>"
         };
         this._events.emit("warning", `Truncated ${key} due to total size exceeding limit`);
         currentSize -= size;
@@ -1892,40 +1783,41 @@ var LangfuseCoreStateless = class {
       this._events.emit("warning", "traceId is required for media upload");
       return;
     }
-    const observationId =
-      (type.includes("generation") || type.includes("span")) && body.id ? body.id : void 0;
-    await Promise.all(
-      ["input", "output", "metadata"].map(async (field) => {
-        if (body[field]) {
-          body[field] =
-            (await this.findAndProcessMedia({
-              data: body[field],
-              traceId,
-              observationId,
-              field,
-            }).catch((e) => {
-              this._events.emit("error", `Error processing multimodal event: ${e}`);
-            })) ?? body[field];
-        }
-      }),
-    );
+    const observationId = (type.includes("generation") || type.includes("span")) && body.id ? body.id : void 0;
+    await Promise.all(["input", "output", "metadata"].map(async (field) => {
+      if (body[field]) {
+        body[field] = await this.findAndProcessMedia({
+          data: body[field],
+          traceId,
+          observationId,
+          field
+        }).catch((e) => {
+          this._events.emit("error", `Error processing multimodal event: ${e}`);
+        }) ?? body[field];
+      }
+    }));
   }
   parseTraceId(type, body) {
     return "traceId" in body ? body.traceId : type.includes("trace") ? body.id : void 0;
   }
-  async findAndProcessMedia({ data, traceId, observationId, field }) {
+  async findAndProcessMedia({
+    data,
+    traceId,
+    observationId,
+    field
+  }) {
     const seenObjects = /* @__PURE__ */ new WeakMap();
     const maxLevels = 10;
     const processRecursively = async (data2, level) => {
       if (typeof data2 === "string" && data2.startsWith("data:")) {
         const media = new LangfuseMedia({
-          base64DataUri: data2,
+          base64DataUri: data2
         });
         await this.processMediaItem({
           media,
           traceId,
           observationId,
-          field,
+          field
         });
         return media;
       }
@@ -1936,15 +1828,12 @@ var LangfuseCoreStateless = class {
         return data2;
       }
       seenObjects.set(data2, true);
-      if (
-        data2 instanceof LangfuseMedia ||
-        Object.prototype.toString.call(data2) === "[object LangfuseMedia]"
-      ) {
+      if (data2 instanceof LangfuseMedia || Object.prototype.toString.call(data2) === "[object LangfuseMedia]") {
         await this.processMediaItem({
           media: data2,
           traceId,
           observationId,
-          field,
+          field
         });
         return data2;
       }
@@ -1952,67 +1841,56 @@ var LangfuseCoreStateless = class {
         return await Promise.all(data2.map((item) => processRecursively(item, level + 1)));
       }
       if (typeof data2 === "object" && data2 !== null) {
-        if (
-          "input_audio" in data2 &&
-          typeof data2["input_audio"] === "object" &&
-          "data" in data2.input_audio
-        ) {
+        if ("input_audio" in data2 && typeof data2["input_audio"] === "object" && "data" in data2.input_audio) {
           const media = new LangfuseMedia({
-            base64DataUri: `data:audio/${data2.input_audio["format"] || "wav"};base64,${data2.input_audio.data}`,
+            base64DataUri: `data:audio/${data2.input_audio["format"] || "wav"};base64,${data2.input_audio.data}`
           });
           await this.processMediaItem({
             media,
             traceId,
             observationId,
-            field,
+            field
           });
           return {
             ...data2,
             input_audio: {
               ...data2.input_audio,
-              data: media,
-            },
+              data: media
+            }
           };
         }
         if ("audio" in data2 && typeof data2["audio"] === "object" && "data" in data2.audio) {
           const media = new LangfuseMedia({
-            base64DataUri: `data:audio/${data2.audio["format"] || "wav"};base64,${data2.audio.data}`,
+            base64DataUri: `data:audio/${data2.audio["format"] || "wav"};base64,${data2.audio.data}`
           });
           await this.processMediaItem({
             media,
             traceId,
             observationId,
-            field,
+            field
           });
           return {
             ...data2,
             audio: {
               ...data2.audio,
-              data: media,
-            },
+              data: media
+            }
           };
         }
-        return Object.fromEntries(
-          await Promise.all(
-            Object.entries(data2).map(async ([key, value]) => [
-              key,
-              await processRecursively(value, level + 1),
-            ]),
-          ),
-        );
+        return Object.fromEntries(await Promise.all(Object.entries(data2).map(async ([key, value]) => [key, await processRecursively(value, level + 1)])));
       }
       return data2;
     };
     return await processRecursively(data, 1);
   }
-  async processMediaItem({ media, traceId, observationId, field }) {
+  async processMediaItem({
+    media,
+    traceId,
+    observationId,
+    field
+  }) {
     try {
-      if (
-        !media.contentLength ||
-        !media._contentType ||
-        !media.contentSha256Hash ||
-        !media._contentBytes
-      ) {
+      if (!media.contentLength || !media._contentType || !media.contentSha256Hash || !media._contentBytes) {
         return;
       }
       const getUploadUrlBody = {
@@ -2021,17 +1899,17 @@ var LangfuseCoreStateless = class {
         observationId,
         field,
         contentType: media._contentType,
-        sha256Hash: media.contentSha256Hash,
+        sha256Hash: media.contentSha256Hash
       };
-      const fetchResponse = await this.fetch(
-        `${this.baseUrl}/api/public/media`,
-        this._getFetchOptions({
-          method: "POST",
-          body: JSON.stringify(getUploadUrlBody),
-        }),
-      );
+      const fetchResponse = await this.fetch(`${this.baseUrl}/api/public/media`, this._getFetchOptions({
+        method: "POST",
+        body: JSON.stringify(getUploadUrlBody)
+      }));
       const uploadUrlResponse = await fetchResponse.json();
-      const { uploadUrl, mediaId } = uploadUrlResponse;
+      const {
+        uploadUrl,
+        mediaId
+      } = uploadUrlResponse;
       media._mediaId = mediaId;
       if (uploadUrl) {
         this._events.emit("debug", `Uploading media ${mediaId}`);
@@ -2042,24 +1920,21 @@ var LangfuseCoreStateless = class {
           contentType: media._contentType,
           contentSha256Hash: media.contentSha256Hash,
           maxRetries: 3,
-          baseDelay: 1e3,
+          baseDelay: 1e3
         });
         if (!uploadResponse) {
           throw Error("Media upload process failed");
         }
         const patchMediaBody = {
-          uploadedAt: /* @__PURE__ */ new Date().toISOString(),
+          uploadedAt: (/* @__PURE__ */ new Date()).toISOString(),
           uploadHttpStatus: uploadResponse.status,
           uploadHttpError: await uploadResponse.text(),
-          uploadTimeMs: Date.now() - startTime,
+          uploadTimeMs: Date.now() - startTime
         };
-        await this.fetch(
-          `${this.baseUrl}/api/public/media/${mediaId}`,
-          this._getFetchOptions({
-            method: "PATCH",
-            body: JSON.stringify(patchMediaBody),
-          }),
-        );
+        await this.fetch(`${this.baseUrl}/api/public/media/${mediaId}`, this._getFetchOptions({
+          method: "PATCH",
+          body: JSON.stringify(patchMediaBody)
+        }));
         this._events.emit("debug", `Media upload status reported for ${mediaId}`);
       } else {
         this._events.emit("debug", `Media ${mediaId} already uploaded`);
@@ -2069,8 +1944,14 @@ var LangfuseCoreStateless = class {
     }
   }
   async uploadMediaWithBackoff(params) {
-    const { uploadUrl, contentType, contentSha256Hash, contentBytes, maxRetries, baseDelay } =
-      params;
+    const {
+      uploadUrl,
+      contentType,
+      contentSha256Hash,
+      contentBytes,
+      maxRetries,
+      baseDelay
+    } = params;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         const uploadResponse = await this.fetch(uploadUrl, {
@@ -2079,14 +1960,10 @@ var LangfuseCoreStateless = class {
           headers: {
             "Content-Type": contentType,
             "x-amz-checksum-sha256": contentSha256Hash,
-            "x-ms-blob-type": "BlockBlob",
-          },
+            "x-ms-blob-type": "BlockBlob"
+          }
         });
-        if (
-          attempt < maxRetries &&
-          uploadResponse.status !== 200 &&
-          uploadResponse.status !== 201
-        ) {
+        if (attempt < maxRetries && uploadResponse.status !== 200 && uploadResponse.status !== 201) {
           throw new Error(`Upload failed with status ${uploadResponse.status}`);
         }
         return uploadResponse;
@@ -2137,11 +2014,10 @@ var LangfuseCoreStateless = class {
       return callback?.();
     }
     const items = queue.splice(0, this.flushAt);
-    const { processedItems, remainingItems } = this.processQueueItems(
-      items,
-      MAX_EVENT_SIZE_BYTES,
-      MAX_BATCH_SIZE_BYTES,
-    );
+    const {
+      processedItems,
+      remainingItems
+    } = this.processQueueItems(items, MAX_EVENT_SIZE_BYTES, MAX_BATCH_SIZE_BYTES);
     this.setPersistedProperty(LangfusePersistedProperty.Queue, [...remainingItems, ...queue]);
     const promiseUUID = generateUUID();
     const done = (err) => {
@@ -2168,19 +2044,17 @@ var LangfuseCoreStateless = class {
         sdk_version: this.getLibraryVersion(),
         sdk_variant: this.getLibraryId(),
         public_key: this.publicKey,
-        sdk_name: "langfuse-js",
-      },
+        sdk_name: "langfuse-js"
+      }
     });
     const url = `${this.baseUrl}/api/public/ingestion`;
     const fetchOptions = this._getFetchOptions({
       method: "POST",
-      body: payload,
+      body: payload
     });
-    const requestPromise = this.fetchWithRetry(url, fetchOptions)
-      .then(() => done())
-      .catch((err) => {
-        done(err);
-      });
+    const requestPromise = this.fetchWithRetry(url, fetchOptions).then(() => done()).catch((err) => {
+      done(err);
+    });
     this.pendingIngestionPromises[promiseUUID] = requestPromise;
     requestPromise.finally(() => {
       delete this.pendingIngestionPromises[promiseUUID];
@@ -2214,7 +2088,7 @@ var LangfuseCoreStateless = class {
     }
     return {
       processedItems,
-      remainingItems,
+      remainingItems
     };
   }
   _getFetchOptions(p) {
@@ -2228,31 +2102,30 @@ var LangfuseCoreStateless = class {
         "X-Langfuse-Sdk-Integration": this.sdkIntegration,
         "X-Langfuse-Public-Key": this.publicKey,
         ...this.additionalHeaders,
-        ...this.constructAuthorizationHeader(this.publicKey, this.secretKey),
+        ...this.constructAuthorizationHeader(this.publicKey, this.secretKey)
       },
       body: p.body,
-      ...(p.fetchTimeout !== void 0
-        ? {
-            signal: AbortSignal.timeout(p.fetchTimeout),
-          }
-        : {}),
+      ...p.fetchTimeout !== void 0 ? {
+        signal: AbortSignal.timeout(p.fetchTimeout)
+      } : {}
     };
     return fetchOptions;
   }
   constructAuthorizationHeader(publicKey, secretKey) {
     if (secretKey === void 0) {
       return {
-        Authorization: "Bearer " + publicKey,
+        Authorization: "Bearer " + publicKey
       };
     } else {
-      const encodedCredentials =
-        typeof btoa === "function"
-          ? // btoa() is available, the code is running in a browser or edge environment
-            btoa(publicKey + ":" + secretKey)
-          : // btoa() is not available, the code is running in Node.js
-            Buffer.from(publicKey + ":" + secretKey).toString("base64");
+      const encodedCredentials = typeof btoa === "function" ? (
+        // btoa() is available, the code is running in a browser or edge environment
+        btoa(publicKey + ":" + secretKey)
+      ) : (
+        // btoa() is not available, the code is running in Node.js
+        Buffer.from(publicKey + ":" + secretKey).toString("base64")
+      );
       return {
-        Authorization: "Basic " + encodedCredentials,
+        Authorization: "Basic " + encodedCredentials
       };
     }
   }
@@ -2262,33 +2135,29 @@ var LangfuseCoreStateless = class {
       setTimeout(() => ctrl.abort(), ms);
       return ctrl.signal;
     };
-    return await retriable(
-      async () => {
-        let res = null;
-        try {
-          res = await this.fetch(url, {
-            signal: AbortSignal.timeout(this.requestTimeout),
-            ...options,
-          });
-        } catch (e) {
-          throw new LangfuseFetchNetworkError(e);
-        }
-        if (res.status < 200 || res.status >= 400) {
-          const body = await res.json();
-          throw new LangfuseFetchHttpError(res, JSON.stringify(body));
-        }
-        const returnBody = await res.json();
-        if (res.status === 207 && returnBody.errors.length > 0) {
-          throw new LangfuseFetchHttpError(res, JSON.stringify(returnBody.errors));
-        }
-        return res;
-      },
-      {
-        ...this._retryOptions,
-        ...retryOptions,
-      },
-      (string) => this._events.emit("retry", string + ", " + url + ", " + JSON.stringify(options)),
-    );
+    return await retriable(async () => {
+      let res = null;
+      try {
+        res = await this.fetch(url, {
+          signal: AbortSignal.timeout(this.requestTimeout),
+          ...options
+        });
+      } catch (e) {
+        throw new LangfuseFetchNetworkError(e);
+      }
+      if (res.status < 200 || res.status >= 400) {
+        const body = await res.json();
+        throw new LangfuseFetchHttpError(res, JSON.stringify(body));
+      }
+      const returnBody = await res.json();
+      if (res.status === 207 && returnBody.errors.length > 0) {
+        throw new LangfuseFetchHttpError(res, JSON.stringify(returnBody.errors));
+      }
+      return res;
+    }, {
+      ...this._retryOptions,
+      ...retryOptions
+    }, (string) => this._events.emit("retry", string + ", " + url + ", " + JSON.stringify(options)));
   }
   async fetchAndLogErrors(url, options) {
     const res = await this.fetch(url, options);
@@ -2302,7 +2171,8 @@ var LangfuseCoreStateless = class {
     clearTimeout(this._flushTimer);
     try {
       await this.flushAsync();
-      await Promise.all(Object.values(this.pendingIngestionPromises).map((x) => x.catch(() => {})));
+      await Promise.all(Object.values(this.pendingIngestionPromises).map((x) => x.catch(() => {
+      })));
       await this.flushAsync();
     } catch (e) {
       console.error("[Langfuse SDK] Error while shutting down Langfuse", e);
@@ -2316,17 +2186,12 @@ var LangfuseCoreStateless = class {
       this.localEventExportMap.delete(projectId);
       return events;
     } else {
-      this._events.emit(
-        "error",
-        "Local event exports are disabled, but _exportLocalEvents() was called.",
-      );
+      this._events.emit("error", "Local event exports are disabled, but _exportLocalEvents() was called.");
       return [];
     }
   }
   shutdown() {
-    console.warn(
-      "shutdown() is deprecated. It does not wait for all events to be processed. Please use shutdownAsync() instead.",
-    );
+    console.warn("shutdown() is deprecated. It does not wait for all events to be processed. Please use shutdownAsync() instead.");
     void this.shutdownAsync();
   }
   async awaitAllQueuedAndPendingRequests() {
@@ -2337,28 +2202,29 @@ var LangfuseCoreStateless = class {
 };
 var LangfuseCore = class extends LangfuseCoreStateless {
   constructor(params) {
-    const { publicKey, secretKey, enabled, _isLocalEventExportEnabled } = params;
+    const {
+      publicKey,
+      secretKey,
+      enabled,
+      _isLocalEventExportEnabled
+    } = params;
     let isObservabilityEnabled = enabled === false ? false : true;
     if (_isLocalEventExportEnabled) {
       isObservabilityEnabled = true;
     } else if (!secretKey) {
       isObservabilityEnabled = false;
       if (enabled !== false) {
-        console.warn(
-          "Langfuse secret key was not passed to constructor or not set as 'LANGFUSE_SECRET_KEY' environment variable. No observability data will be sent to Langfuse.",
-        );
+        console.warn("Langfuse secret key was not passed to constructor or not set as 'LANGFUSE_SECRET_KEY' environment variable. No observability data will be sent to Langfuse.");
       }
     } else if (!publicKey) {
       isObservabilityEnabled = false;
       if (enabled !== false) {
-        console.warn(
-          "Langfuse public key was not passed to constructor or not set as 'LANGFUSE_PUBLIC_KEY' environment variable. No observability data will be sent to Langfuse.",
-        );
+        console.warn("Langfuse public key was not passed to constructor or not set as 'LANGFUSE_PUBLIC_KEY' environment variable. No observability data will be sent to Langfuse.");
       }
     }
     super({
       ...params,
-      enabled: isObservabilityEnabled,
+      enabled: isObservabilityEnabled
     });
     this._promptCache = new LangfusePromptCache();
   }
@@ -2369,51 +2235,44 @@ var LangfuseCore = class extends LangfuseCoreStateless {
       try {
         const deferRuntime = getEnv("__deferRuntime");
         if (deferRuntime) {
-          deferRuntime.langfuseTraces([
-            {
-              id,
-              name: body.name || "",
-              url: t.getTraceUrl(),
-            },
-          ]);
+          deferRuntime.langfuseTraces([{
+            id,
+            name: body.name || "",
+            url: t.getTraceUrl()
+          }]);
         }
-      } catch {}
+      } catch {
+      }
     }
     return t;
   }
   span(body) {
-    const traceId =
-      body.traceId ||
-      this.traceStateless({
-        name: body.name,
-      });
+    const traceId = body.traceId || this.traceStateless({
+      name: body.name
+    });
     const id = this.spanStateless({
       ...body,
-      traceId,
+      traceId
     });
     return new LangfuseSpanClient(this, id, traceId);
   }
   generation(body) {
-    const traceId =
-      body.traceId ||
-      this.traceStateless({
-        name: body.name,
-      });
+    const traceId = body.traceId || this.traceStateless({
+      name: body.name
+    });
     const id = this.generationStateless({
       ...body,
-      traceId,
+      traceId
     });
     return new LangfuseGenerationClient(this, id, traceId);
   }
   event(body) {
-    const traceId =
-      body.traceId ||
-      this.traceStateless({
-        name: body.name,
-      });
+    const traceId = body.traceId || this.traceStateless({
+      name: body.name
+    });
     const id = this.eventStateless({
       ...body,
-      traceId,
+      traceId
     });
     return new LangfuseEventClient(this, id, traceId);
   }
@@ -2429,7 +2288,7 @@ var LangfuseCore = class extends LangfuseCoreStateless {
       const itemsResponse = await this._getDatasetItems({
         datasetName: name,
         limit: options?.fetchItemsPageSize ?? 50,
-        page,
+        page
       });
       items.push(...itemsResponse.data);
       if (itemsResponse.meta.totalPages <= page) {
@@ -2451,46 +2310,39 @@ var LangfuseCore = class extends LangfuseCoreStateless {
             observationId: obj.observationId,
             traceId: obj.traceId,
             runDescription: runArgs?.description,
-            metadata: runArgs?.metadata,
+            metadata: runArgs?.metadata
           });
           return data;
-        },
-      })),
+        }
+      }))
     };
     return returnDataset;
   }
   async createPrompt(body) {
     const labels = body.labels ?? [];
-    const promptResponse =
-      body.type === "chat"
-        ? await this.createPromptStateless({
-            ...body,
-            prompt: body.prompt.map((item) => {
-              if ("type" in item && item.type === ChatMessageType.Placeholder) {
-                return {
-                  type: ChatMessageType.Placeholder,
-                  name: item.name,
-                };
-              } else {
-                return {
-                  type: ChatMessageType.ChatMessage,
-                  ...item,
-                };
-              }
-            }),
-            labels: body.isActive
-              ? [.../* @__PURE__ */ new Set([...labels, "production"])]
-              : labels,
-            // backward compatibility for isActive
-          })
-        : await this.createPromptStateless({
-            ...body,
-            type: body.type ?? "text",
-            labels: body.isActive
-              ? [.../* @__PURE__ */ new Set([...labels, "production"])]
-              : labels,
-            // backward compatibility for isActive
-          });
+    const promptResponse = body.type === "chat" ? await this.createPromptStateless({
+      ...body,
+      prompt: body.prompt.map((item) => {
+        if ("type" in item && item.type === ChatMessageType.Placeholder) {
+          return {
+            type: ChatMessageType.Placeholder,
+            name: item.name
+          };
+        } else {
+          return {
+            type: ChatMessageType.ChatMessage,
+            ...item
+          };
+        }
+      }),
+      labels: body.isActive ? [.../* @__PURE__ */ new Set([...labels, "production"])] : labels
+      // backward compatibility for isActive
+    }) : await this.createPromptStateless({
+      ...body,
+      type: body.type ?? "text",
+      labels: body.isActive ? [.../* @__PURE__ */ new Set([...labels, "production"])] : labels
+      // backward compatibility for isActive
+    });
     if (promptResponse.type === "chat") {
       return new ChatPromptClient(promptResponse);
     }
@@ -2505,7 +2357,7 @@ var LangfuseCore = class extends LangfuseCoreStateless {
     const cacheKey = this._getPromptCacheKey({
       name,
       version: version2,
-      label: options?.label,
+      label: options?.label
     });
     const cachedPrompt = this._promptCache.getIncludingExpired(cacheKey);
     if (!cachedPrompt || options?.cacheTtlSeconds === 0) {
@@ -2516,7 +2368,7 @@ var LangfuseCore = class extends LangfuseCoreStateless {
           label: options?.label,
           cacheTtlSeconds: options?.cacheTtlSeconds,
           maxRetries: options?.maxRetries,
-          fetchTimeout: options?.fetchTimeoutMs,
+          fetchTimeout: options?.fetchTimeoutMs
         });
       } catch (err) {
         if (options?.fallback) {
@@ -2526,29 +2378,23 @@ var LangfuseCore = class extends LangfuseCoreStateless {
             labels: options.label ? [options.label] : [],
             cacheTtlSeconds: options?.cacheTtlSeconds,
             config: {},
-            tags: [],
+            tags: []
           };
           if (options.type === "chat") {
-            return new ChatPromptClient(
-              {
-                ...sharedFallbackParams,
-                type: "chat",
-                prompt: options.fallback.map((msg) => ({
-                  type: ChatMessageType.ChatMessage,
-                  ...msg,
-                })),
-              },
-              true,
-            );
+            return new ChatPromptClient({
+              ...sharedFallbackParams,
+              type: "chat",
+              prompt: options.fallback.map((msg) => ({
+                type: ChatMessageType.ChatMessage,
+                ...msg
+              }))
+            }, true);
           } else {
-            return new TextPromptClient(
-              {
-                ...sharedFallbackParams,
-                type: "text",
-                prompt: options.fallback,
-              },
-              true,
-            );
+            return new TextPromptClient({
+              ...sharedFallbackParams,
+              type: "text",
+              prompt: options.fallback
+            }, true);
           }
         }
         throw err;
@@ -2562,11 +2408,9 @@ var LangfuseCore = class extends LangfuseCoreStateless {
           label: options?.label,
           cacheTtlSeconds: options?.cacheTtlSeconds,
           maxRetries: options?.maxRetries,
-          fetchTimeout: options?.fetchTimeoutMs,
+          fetchTimeout: options?.fetchTimeoutMs
         }).catch(() => {
-          console.warn(
-            `Failed to refresh prompt cache '${cacheKey}', stale cache will be used until next refresh succeeds.`,
-          );
+          console.warn(`Failed to refresh prompt cache '${cacheKey}', stale cache will be used until next refresh succeeds.`);
         });
         this._promptCache.addRefreshingPromise(cacheKey, refreshPromptPromise);
       }
@@ -2575,7 +2419,11 @@ var LangfuseCore = class extends LangfuseCoreStateless {
     return cachedPrompt.value;
   }
   _getPromptCacheKey(params) {
-    const { name, version: version2, label } = params;
+    const {
+      name,
+      version: version2,
+      label
+    } = params;
     const parts = [name];
     if (version2 !== void 0) {
       parts.push("version:" + version2.toString());
@@ -2589,14 +2437,18 @@ var LangfuseCore = class extends LangfuseCoreStateless {
   async _fetchPromptAndUpdateCache(params) {
     const cacheKey = this._getPromptCacheKey(params);
     try {
-      const { name, version: version2, cacheTtlSeconds, label, maxRetries, fetchTimeout } = params;
-      const { data, fetchResult } = await this.getPromptStateless(
+      const {
         name,
-        version2,
+        version: version2,
+        cacheTtlSeconds,
         label,
         maxRetries,
-        fetchTimeout,
-      );
+        fetchTimeout
+      } = params;
+      const {
+        data,
+        fetchResult
+      } = await this.getPromptStateless(name, version2, label, maxRetries, fetchTimeout);
       if (fetchResult === "failure") {
         throw Error(data.message ?? "Internal error while fetching prompt");
       }
@@ -2657,11 +2509,14 @@ var LangfuseCore = class extends LangfuseCoreStateless {
    * ```
    */
   async resolveMediaReferences(params) {
-    const { obj, ...rest } = params;
+    const {
+      obj,
+      ...rest
+    } = params;
     return LangfuseMedia.resolveMediaReferences({
       ...rest,
       langfuseClient: this,
-      obj,
+      obj
     });
   }
   _updateSpan(body) {
@@ -2674,7 +2529,12 @@ var LangfuseCore = class extends LangfuseCoreStateless {
   }
 };
 var LangfuseObjectClient = class {
-  constructor({ client: client2, id, traceId, observationId }) {
+  constructor({
+    client: client2,
+    id,
+    traceId,
+    observationId
+  }) {
     this.client = client2;
     this.id = id;
     this.traceId = traceId;
@@ -2684,28 +2544,28 @@ var LangfuseObjectClient = class {
     return this.client.event({
       ...body,
       traceId: this.traceId,
-      parentObservationId: this.observationId,
+      parentObservationId: this.observationId
     });
   }
   span(body) {
     return this.client.span({
       ...body,
       traceId: this.traceId,
-      parentObservationId: this.observationId,
+      parentObservationId: this.observationId
     });
   }
   generation(body) {
     return this.client.generation({
       ...body,
       traceId: this.traceId,
-      parentObservationId: this.observationId,
+      parentObservationId: this.observationId
     });
   }
   score(body) {
     this.client.score({
       ...body,
       traceId: this.traceId,
-      observationId: this.observationId,
+      observationId: this.observationId
     });
     return this;
   }
@@ -2719,13 +2579,13 @@ var LangfuseTraceClient = class extends LangfuseObjectClient {
       client: client2,
       id: traceId,
       traceId,
-      observationId: null,
+      observationId: null
     });
   }
   update(body) {
     this.client.trace({
       ...body,
-      id: this.id,
+      id: this.id
     });
     return this;
   }
@@ -2736,7 +2596,7 @@ var LangfuseObservationClient = class extends LangfuseObjectClient {
       client: client2,
       id,
       traceId,
-      observationId: id,
+      observationId: id
     });
   }
 };
@@ -2748,7 +2608,7 @@ var LangfuseSpanClient = class extends LangfuseObservationClient {
     this.client._updateSpan({
       ...body,
       id: this.id,
-      traceId: this.traceId,
+      traceId: this.traceId
     });
     return this;
   }
@@ -2757,7 +2617,7 @@ var LangfuseSpanClient = class extends LangfuseObservationClient {
       ...body,
       id: this.id,
       traceId: this.traceId,
-      endTime: /* @__PURE__ */ new Date(),
+      endTime: /* @__PURE__ */ new Date()
     });
     return this;
   }
@@ -2770,7 +2630,7 @@ var LangfuseGenerationClient = class extends LangfuseObservationClient {
     this.client._updateGeneration({
       ...body,
       id: this.id,
-      traceId: this.traceId,
+      traceId: this.traceId
     });
     return this;
   }
@@ -2779,7 +2639,7 @@ var LangfuseGenerationClient = class extends LangfuseObservationClient {
       ...body,
       id: this.id,
       traceId: this.traceId,
-      endTime: /* @__PURE__ */ new Date(),
+      endTime: /* @__PURE__ */ new Date()
     });
     return this;
   }
@@ -2805,16 +2665,14 @@ var cookieStore = {
           return decodeURIComponent(c.substring(nameEQ.length, c.length));
         }
       }
-    } catch (err) {}
+    } catch (err) {
+    }
     return null;
   },
   setItem(key, value) {
     try {
-      const cdomain = "",
-        expires = "",
-        secure = "";
-      const new_cookie_val =
-        key + "=" + encodeURIComponent(value) + expires + "; path=/" + cdomain + secure;
+      const cdomain = "", expires = "", secure = "";
+      const new_cookie_val = key + "=" + encodeURIComponent(value) + expires + "; path=/" + cdomain + secure;
       document.cookie = new_cookie_val;
     } catch (err) {
       return;
@@ -2841,7 +2699,7 @@ var cookieStore = {
       keys.push(c.split("=")[0]);
     }
     return keys;
-  },
+  }
 };
 var createStorageLike = (store) => {
   return {
@@ -2863,7 +2721,7 @@ var createStorageLike = (store) => {
         keys.push(key);
       }
       return keys;
-    },
+    }
   };
 };
 var checkStoreIsSupported = (storage, key = "__mplssupport__") => {
@@ -2907,7 +2765,7 @@ var createMemoryStorage = () => {
         keys.push(key);
       }
       return keys;
-    },
+    }
   };
   return store;
 };
@@ -2936,7 +2794,7 @@ var getStorage = (type, window2) => {
   }
 };
 var ContentType;
-(function (ContentType2) {
+(function(ContentType2) {
   ContentType2["Json"] = "application/json";
   ContentType2["FormData"] = "multipart/form-data";
   ContentType2["UrlEncoded"] = "application/x-www-form-urlencoded";
@@ -2952,32 +2810,20 @@ var HttpClient = class {
       credentials: "same-origin",
       headers: {},
       redirect: "follow",
-      referrerPolicy: "no-referrer",
+      referrerPolicy: "no-referrer"
     };
     this.setSecurityData = (data) => {
       this.securityData = data;
     };
     this.contentFormatters = {
-      [ContentType.Json]: (input) =>
-        input !== null && (typeof input === "object" || typeof input === "string")
-          ? JSON.stringify(input)
-          : input,
-      [ContentType.Text]: (input) =>
-        input !== null && typeof input !== "string" ? JSON.stringify(input) : input,
-      [ContentType.FormData]: (input) =>
-        Object.keys(input || {}).reduce((formData, key) => {
-          const property = input[key];
-          formData.append(
-            key,
-            property instanceof Blob
-              ? property
-              : typeof property === "object" && property !== null
-                ? JSON.stringify(property)
-                : `${property}`,
-          );
-          return formData;
-        }, new FormData()),
-      [ContentType.UrlEncoded]: (input) => this.toQueryString(input),
+      [ContentType.Json]: (input) => input !== null && (typeof input === "object" || typeof input === "string") ? JSON.stringify(input) : input,
+      [ContentType.Text]: (input) => input !== null && typeof input !== "string" ? JSON.stringify(input) : input,
+      [ContentType.FormData]: (input) => Object.keys(input || {}).reduce((formData, key) => {
+        const property = input[key];
+        formData.append(key, property instanceof Blob ? property : typeof property === "object" && property !== null ? JSON.stringify(property) : `${property}`);
+        return formData;
+      }, new FormData()),
+      [ContentType.UrlEncoded]: (input) => this.toQueryString(input)
     };
     this.createAbortSignal = (cancelToken) => {
       if (this.abortControllers.has(cancelToken)) {
@@ -3009,50 +2855,36 @@ var HttpClient = class {
       cancelToken,
       ...params
     }) => {
-      const secureParams =
-        ((typeof secure === "boolean" ? secure : this.baseApiParams.secure) &&
-          this.securityWorker &&
-          (await this.securityWorker(this.securityData))) ||
-        {};
+      const secureParams = (typeof secure === "boolean" ? secure : this.baseApiParams.secure) && this.securityWorker && await this.securityWorker(this.securityData) || {};
       const requestParams = this.mergeRequestParams(params, secureParams);
       const queryString = query && this.toQueryString(query);
       const payloadFormatter = this.contentFormatters[type || ContentType.Json];
       const responseFormat = format || requestParams.format;
-      return this.customFetch(
-        `${baseUrl || this.baseUrl || ""}${path}${queryString ? `?${queryString}` : ""}`,
-        {
-          ...requestParams,
-          headers: {
-            ...requestParams.headers,
-            ...(type && type !== ContentType.FormData
-              ? {
-                  "Content-Type": type,
-                }
-              : {}),
-          },
-          signal:
-            (cancelToken ? this.createAbortSignal(cancelToken) : requestParams.signal) || null,
-          body: typeof body === "undefined" || body === null ? null : payloadFormatter(body),
+      return this.customFetch(`${baseUrl || this.baseUrl || ""}${path}${queryString ? `?${queryString}` : ""}`, {
+        ...requestParams,
+        headers: {
+          ...requestParams.headers || {},
+          ...type && type !== ContentType.FormData ? {
+            "Content-Type": type
+          } : {}
         },
-      ).then(async (response) => {
+        signal: (cancelToken ? this.createAbortSignal(cancelToken) : requestParams.signal) || null,
+        body: typeof body === "undefined" || body === null ? null : payloadFormatter(body)
+      }).then(async (response) => {
         const r = response.clone();
         r.data = null;
         r.error = null;
-        const data = !responseFormat
-          ? r
-          : await response[responseFormat]()
-              .then((data2) => {
-                if (r.ok) {
-                  r.data = data2;
-                } else {
-                  r.error = data2;
-                }
-                return r;
-              })
-              .catch((e) => {
-                r.error = e;
-                return r;
-              });
+        const data = !responseFormat ? r : await response[responseFormat]().then((data2) => {
+          if (r.ok) {
+            r.data = data2;
+          } else {
+            r.error = data2;
+          }
+          return r;
+        }).catch((e) => {
+          r.error = e;
+          return r;
+        });
         if (cancelToken) {
           this.abortControllers.delete(cancelToken);
         }
@@ -3076,13 +2908,7 @@ var HttpClient = class {
   toQueryString(rawQuery) {
     const query = rawQuery || {};
     const keys = Object.keys(query).filter((key) => "undefined" !== typeof query[key]);
-    return keys
-      .map((key) =>
-        Array.isArray(query[key])
-          ? this.addArrayQueryParam(query, key)
-          : this.addQueryParam(query, key),
-      )
-      .join("&");
+    return keys.map((key) => Array.isArray(query[key]) ? this.addArrayQueryParam(query, key) : this.addQueryParam(query, key)).join("&");
   }
   addQueryParams(rawQuery) {
     const queryString = this.toQueryString(rawQuery);
@@ -3092,12 +2918,12 @@ var HttpClient = class {
     return {
       ...this.baseApiParams,
       ...params1,
-      ...params2,
+      ...params2 || {},
       headers: {
-        ...this.baseApiParams.headers,
-        ...params1.headers,
-        ...(params2 && params2.headers),
-      },
+        ...this.baseApiParams.headers || {},
+        ...params1.headers || {},
+        ...params2 && params2.headers || {}
+      }
     };
   }
 };
@@ -3113,16 +2939,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request POST:/api/public/annotation-queues/{queueId}/items
        * @secure
        */
-      annotationQueuesCreateQueueItem: (queueId, data, params = {}) =>
-        this.request({
-          path: `/api/public/annotation-queues/${queueId}/items`,
-          method: "POST",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      annotationQueuesCreateQueueItem: (queueId, data, params = {}) => this.request({
+        path: `/api/public/annotation-queues/${queueId}/items`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Remove an item from an annotation queue
        *
@@ -3131,14 +2956,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request DELETE:/api/public/annotation-queues/{queueId}/items/{itemId}
        * @secure
        */
-      annotationQueuesDeleteQueueItem: (queueId, itemId, params = {}) =>
-        this.request({
-          path: `/api/public/annotation-queues/${queueId}/items/${itemId}`,
-          method: "DELETE",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      annotationQueuesDeleteQueueItem: (queueId, itemId, params = {}) => this.request({
+        path: `/api/public/annotation-queues/${queueId}/items/${itemId}`,
+        method: "DELETE",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get an annotation queue by ID
        *
@@ -3147,14 +2971,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/annotation-queues/{queueId}
        * @secure
        */
-      annotationQueuesGetQueue: (queueId, params = {}) =>
-        this.request({
-          path: `/api/public/annotation-queues/${queueId}`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      annotationQueuesGetQueue: (queueId, params = {}) => this.request({
+        path: `/api/public/annotation-queues/${queueId}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get a specific item from an annotation queue
        *
@@ -3163,14 +2986,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/annotation-queues/{queueId}/items/{itemId}
        * @secure
        */
-      annotationQueuesGetQueueItem: (queueId, itemId, params = {}) =>
-        this.request({
-          path: `/api/public/annotation-queues/${queueId}/items/${itemId}`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      annotationQueuesGetQueueItem: (queueId, itemId, params = {}) => this.request({
+        path: `/api/public/annotation-queues/${queueId}/items/${itemId}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get items for a specific annotation queue
        *
@@ -3179,15 +3001,17 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/annotation-queues/{queueId}/items
        * @secure
        */
-      annotationQueuesListQueueItems: ({ queueId, ...query }, params = {}) =>
-        this.request({
-          path: `/api/public/annotation-queues/${queueId}/items`,
-          method: "GET",
-          query,
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      annotationQueuesListQueueItems: ({
+        queueId,
+        ...query
+      }, params = {}) => this.request({
+        path: `/api/public/annotation-queues/${queueId}/items`,
+        method: "GET",
+        query,
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get all annotation queues
        *
@@ -3196,15 +3020,14 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/annotation-queues
        * @secure
        */
-      annotationQueuesListQueues: (query, params = {}) =>
-        this.request({
-          path: `/api/public/annotation-queues`,
-          method: "GET",
-          query,
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      annotationQueuesListQueues: (query, params = {}) => this.request({
+        path: `/api/public/annotation-queues`,
+        method: "GET",
+        query,
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Update an annotation queue item
        *
@@ -3213,16 +3036,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request PATCH:/api/public/annotation-queues/{queueId}/items/{itemId}
        * @secure
        */
-      annotationQueuesUpdateQueueItem: (queueId, itemId, data, params = {}) =>
-        this.request({
-          path: `/api/public/annotation-queues/${queueId}/items/${itemId}`,
-          method: "PATCH",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      annotationQueuesUpdateQueueItem: (queueId, itemId, data, params = {}) => this.request({
+        path: `/api/public/annotation-queues/${queueId}/items/${itemId}`,
+        method: "PATCH",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Create a comment. Comments may be attached to different object types (trace, observation, session, prompt).
        *
@@ -3231,16 +3053,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request POST:/api/public/comments
        * @secure
        */
-      commentsCreate: (data, params = {}) =>
-        this.request({
-          path: `/api/public/comments`,
-          method: "POST",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      commentsCreate: (data, params = {}) => this.request({
+        path: `/api/public/comments`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get all comments
        *
@@ -3249,15 +3070,14 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/comments
        * @secure
        */
-      commentsGet: (query, params = {}) =>
-        this.request({
-          path: `/api/public/comments`,
-          method: "GET",
-          query,
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      commentsGet: (query, params = {}) => this.request({
+        path: `/api/public/comments`,
+        method: "GET",
+        query,
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get a comment by id
        *
@@ -3266,14 +3086,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/comments/{commentId}
        * @secure
        */
-      commentsGetById: (commentId, params = {}) =>
-        this.request({
-          path: `/api/public/comments/${commentId}`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      commentsGetById: (commentId, params = {}) => this.request({
+        path: `/api/public/comments/${commentId}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Create a dataset item
        *
@@ -3282,16 +3101,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request POST:/api/public/dataset-items
        * @secure
        */
-      datasetItemsCreate: (data, params = {}) =>
-        this.request({
-          path: `/api/public/dataset-items`,
-          method: "POST",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      datasetItemsCreate: (data, params = {}) => this.request({
+        path: `/api/public/dataset-items`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Delete a dataset item and all its run items. This action is irreversible.
        *
@@ -3300,14 +3118,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request DELETE:/api/public/dataset-items/{id}
        * @secure
        */
-      datasetItemsDelete: (id, params = {}) =>
-        this.request({
-          path: `/api/public/dataset-items/${id}`,
-          method: "DELETE",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      datasetItemsDelete: (id, params = {}) => this.request({
+        path: `/api/public/dataset-items/${id}`,
+        method: "DELETE",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get a dataset item
        *
@@ -3316,14 +3133,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/dataset-items/{id}
        * @secure
        */
-      datasetItemsGet: (id, params = {}) =>
-        this.request({
-          path: `/api/public/dataset-items/${id}`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      datasetItemsGet: (id, params = {}) => this.request({
+        path: `/api/public/dataset-items/${id}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get dataset items
        *
@@ -3332,15 +3148,14 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/dataset-items
        * @secure
        */
-      datasetItemsList: (query, params = {}) =>
-        this.request({
-          path: `/api/public/dataset-items`,
-          method: "GET",
-          query,
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      datasetItemsList: (query, params = {}) => this.request({
+        path: `/api/public/dataset-items`,
+        method: "GET",
+        query,
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Create a dataset run item
        *
@@ -3349,16 +3164,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request POST:/api/public/dataset-run-items
        * @secure
        */
-      datasetRunItemsCreate: (data, params = {}) =>
-        this.request({
-          path: `/api/public/dataset-run-items`,
-          method: "POST",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      datasetRunItemsCreate: (data, params = {}) => this.request({
+        path: `/api/public/dataset-run-items`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description List dataset run items
        *
@@ -3367,14 +3181,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/dataset-run-items
        * @secure
        */
-      datasetRunItemsList: (query, params = {}) =>
-        this.request({
-          path: `/api/public/dataset-run-items`,
-          method: "GET",
-          query,
-          secure: true,
-          ...params,
-        }),
+      datasetRunItemsList: (query, params = {}) => this.request({
+        path: `/api/public/dataset-run-items`,
+        method: "GET",
+        query,
+        secure: true,
+        ...params
+      }),
       /**
        * @description Create a dataset
        *
@@ -3383,16 +3196,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request POST:/api/public/v2/datasets
        * @secure
        */
-      datasetsCreate: (data, params = {}) =>
-        this.request({
-          path: `/api/public/v2/datasets`,
-          method: "POST",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      datasetsCreate: (data, params = {}) => this.request({
+        path: `/api/public/v2/datasets`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Delete a dataset run and all its run items. This action is irreversible.
        *
@@ -3401,14 +3213,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request DELETE:/api/public/datasets/{datasetName}/runs/{runName}
        * @secure
        */
-      datasetsDeleteRun: (datasetName, runName, params = {}) =>
-        this.request({
-          path: `/api/public/datasets/${datasetName}/runs/${runName}`,
-          method: "DELETE",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      datasetsDeleteRun: (datasetName, runName, params = {}) => this.request({
+        path: `/api/public/datasets/${datasetName}/runs/${runName}`,
+        method: "DELETE",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get a dataset
        *
@@ -3417,14 +3228,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/v2/datasets/{datasetName}
        * @secure
        */
-      datasetsGet: (datasetName, params = {}) =>
-        this.request({
-          path: `/api/public/v2/datasets/${datasetName}`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      datasetsGet: (datasetName, params = {}) => this.request({
+        path: `/api/public/v2/datasets/${datasetName}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get a dataset run and its items
        *
@@ -3433,14 +3243,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/datasets/{datasetName}/runs/{runName}
        * @secure
        */
-      datasetsGetRun: (datasetName, runName, params = {}) =>
-        this.request({
-          path: `/api/public/datasets/${datasetName}/runs/${runName}`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      datasetsGetRun: (datasetName, runName, params = {}) => this.request({
+        path: `/api/public/datasets/${datasetName}/runs/${runName}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get dataset runs
        *
@@ -3449,15 +3258,17 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/datasets/{datasetName}/runs
        * @secure
        */
-      datasetsGetRuns: ({ datasetName, ...query }, params = {}) =>
-        this.request({
-          path: `/api/public/datasets/${datasetName}/runs`,
-          method: "GET",
-          query,
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      datasetsGetRuns: ({
+        datasetName,
+        ...query
+      }, params = {}) => this.request({
+        path: `/api/public/datasets/${datasetName}/runs`,
+        method: "GET",
+        query,
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get all datasets
        *
@@ -3466,15 +3277,14 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/v2/datasets
        * @secure
        */
-      datasetsList: (query, params = {}) =>
-        this.request({
-          path: `/api/public/v2/datasets`,
-          method: "GET",
-          query,
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      datasetsList: (query, params = {}) => this.request({
+        path: `/api/public/v2/datasets`,
+        method: "GET",
+        query,
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Check health of API and database
        *
@@ -3482,13 +3292,12 @@ var LangfusePublicApi = class extends HttpClient {
        * @name HealthHealth
        * @request GET:/api/public/health
        */
-      healthHealth: (params = {}) =>
-        this.request({
-          path: `/api/public/health`,
-          method: "GET",
-          format: "json",
-          ...params,
-        }),
+      healthHealth: (params = {}) => this.request({
+        path: `/api/public/health`,
+        method: "GET",
+        format: "json",
+        ...params
+      }),
       /**
        * @description Batched ingestion for Langfuse Tracing. If you want to use tracing via the API, such as to build your own Langfuse client implementation, this is the only API route you need to implement. Within each batch, there can be multiple events. Each event has a type, an id, a timestamp, metadata and a body. Internally, we refer to this as the "event envelope" as it tells us something about the event but not the trace. We use the event id within this envelope to deduplicate messages to avoid processing the same event twice, i.e. the event id should be unique per request. The event.body.id is the ID of the actual trace and will be used for updates and will be visible within the Langfuse App. I.e. if you want to update a trace, you'd use the same body id, but separate event IDs. Notes: - Introduction to data model: https://langfuse.com/docs/tracing-data-model - Batch sizes are limited to 3.5 MB in total. You need to adjust the number of events per batch accordingly. - The API does not return a 4xx status code for input errors. Instead, it responds with a 207 status code, which includes a list of the encountered errors.
        *
@@ -3497,16 +3306,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request POST:/api/public/ingestion
        * @secure
        */
-      ingestionBatch: (data, params = {}) =>
-        this.request({
-          path: `/api/public/ingestion`,
-          method: "POST",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      ingestionBatch: (data, params = {}) => this.request({
+        path: `/api/public/ingestion`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get a media record
        *
@@ -3515,14 +3323,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/media/{mediaId}
        * @secure
        */
-      mediaGet: (mediaId, params = {}) =>
-        this.request({
-          path: `/api/public/media/${mediaId}`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      mediaGet: (mediaId, params = {}) => this.request({
+        path: `/api/public/media/${mediaId}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get a presigned upload URL for a media record
        *
@@ -3531,16 +3338,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request POST:/api/public/media
        * @secure
        */
-      mediaGetUploadUrl: (data, params = {}) =>
-        this.request({
-          path: `/api/public/media`,
-          method: "POST",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      mediaGetUploadUrl: (data, params = {}) => this.request({
+        path: `/api/public/media`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Patch a media record
        *
@@ -3549,15 +3355,14 @@ var LangfusePublicApi = class extends HttpClient {
        * @request PATCH:/api/public/media/{mediaId}
        * @secure
        */
-      mediaPatch: (mediaId, data, params = {}) =>
-        this.request({
-          path: `/api/public/media/${mediaId}`,
-          method: "PATCH",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          ...params,
-        }),
+      mediaPatch: (mediaId, data, params = {}) => this.request({
+        path: `/api/public/media/${mediaId}`,
+        method: "PATCH",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        ...params
+      }),
       /**
        * @description Get metrics from the Langfuse project using a query object
        *
@@ -3566,15 +3371,14 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/metrics
        * @secure
        */
-      metricsMetrics: (query, params = {}) =>
-        this.request({
-          path: `/api/public/metrics`,
-          method: "GET",
-          query,
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      metricsMetrics: (query, params = {}) => this.request({
+        path: `/api/public/metrics`,
+        method: "GET",
+        query,
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Create a model
        *
@@ -3583,16 +3387,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request POST:/api/public/models
        * @secure
        */
-      modelsCreate: (data, params = {}) =>
-        this.request({
-          path: `/api/public/models`,
-          method: "POST",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      modelsCreate: (data, params = {}) => this.request({
+        path: `/api/public/models`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Delete a model. Cannot delete models managed by Langfuse. You can create your own definition with the same modelName to override the definition though.
        *
@@ -3601,13 +3404,12 @@ var LangfusePublicApi = class extends HttpClient {
        * @request DELETE:/api/public/models/{id}
        * @secure
        */
-      modelsDelete: (id, params = {}) =>
-        this.request({
-          path: `/api/public/models/${id}`,
-          method: "DELETE",
-          secure: true,
-          ...params,
-        }),
+      modelsDelete: (id, params = {}) => this.request({
+        path: `/api/public/models/${id}`,
+        method: "DELETE",
+        secure: true,
+        ...params
+      }),
       /**
        * @description Get a model
        *
@@ -3616,14 +3418,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/models/{id}
        * @secure
        */
-      modelsGet: (id, params = {}) =>
-        this.request({
-          path: `/api/public/models/${id}`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      modelsGet: (id, params = {}) => this.request({
+        path: `/api/public/models/${id}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get all models
        *
@@ -3632,15 +3433,14 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/models
        * @secure
        */
-      modelsList: (query, params = {}) =>
-        this.request({
-          path: `/api/public/models`,
-          method: "GET",
-          query,
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      modelsList: (query, params = {}) => this.request({
+        path: `/api/public/models`,
+        method: "GET",
+        query,
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get a observation
        *
@@ -3649,14 +3449,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/observations/{observationId}
        * @secure
        */
-      observationsGet: (observationId, params = {}) =>
-        this.request({
-          path: `/api/public/observations/${observationId}`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      observationsGet: (observationId, params = {}) => this.request({
+        path: `/api/public/observations/${observationId}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get a list of observations
        *
@@ -3665,15 +3464,14 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/observations
        * @secure
        */
-      observationsGetMany: (query, params = {}) =>
-        this.request({
-          path: `/api/public/observations`,
-          method: "GET",
-          query,
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      observationsGetMany: (query, params = {}) => this.request({
+        path: `/api/public/observations`,
+        method: "GET",
+        query,
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get all memberships for the organization associated with the API key (requires organization-scoped API key)
        *
@@ -3682,14 +3480,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/organizations/memberships
        * @secure
        */
-      organizationsGetOrganizationMemberships: (params = {}) =>
-        this.request({
-          path: `/api/public/organizations/memberships`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      organizationsGetOrganizationMemberships: (params = {}) => this.request({
+        path: `/api/public/organizations/memberships`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get all projects for the organization associated with the API key (requires organization-scoped API key)
        *
@@ -3698,14 +3495,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/organizations/projects
        * @secure
        */
-      organizationsGetOrganizationProjects: (params = {}) =>
-        this.request({
-          path: `/api/public/organizations/projects`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      organizationsGetOrganizationProjects: (params = {}) => this.request({
+        path: `/api/public/organizations/projects`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get all memberships for a specific project (requires organization-scoped API key)
        *
@@ -3714,14 +3510,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/projects/{projectId}/memberships
        * @secure
        */
-      organizationsGetProjectMemberships: (projectId, params = {}) =>
-        this.request({
-          path: `/api/public/projects/${projectId}/memberships`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      organizationsGetProjectMemberships: (projectId, params = {}) => this.request({
+        path: `/api/public/projects/${projectId}/memberships`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Create or update a membership for the organization associated with the API key (requires organization-scoped API key)
        *
@@ -3730,16 +3525,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request PUT:/api/public/organizations/memberships
        * @secure
        */
-      organizationsUpdateOrganizationMembership: (data, params = {}) =>
-        this.request({
-          path: `/api/public/organizations/memberships`,
-          method: "PUT",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      organizationsUpdateOrganizationMembership: (data, params = {}) => this.request({
+        path: `/api/public/organizations/memberships`,
+        method: "PUT",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Create or update a membership for a specific project (requires organization-scoped API key). The user must already be a member of the organization.
        *
@@ -3748,16 +3542,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request PUT:/api/public/projects/{projectId}/memberships
        * @secure
        */
-      organizationsUpdateProjectMembership: (projectId, data, params = {}) =>
-        this.request({
-          path: `/api/public/projects/${projectId}/memberships`,
-          method: "PUT",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      organizationsUpdateProjectMembership: (projectId, data, params = {}) => this.request({
+        path: `/api/public/projects/${projectId}/memberships`,
+        method: "PUT",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Create a new project (requires organization-scoped API key)
        *
@@ -3766,16 +3559,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request POST:/api/public/projects
        * @secure
        */
-      projectsCreate: (data, params = {}) =>
-        this.request({
-          path: `/api/public/projects`,
-          method: "POST",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      projectsCreate: (data, params = {}) => this.request({
+        path: `/api/public/projects`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Create a new API key for a project (requires organization-scoped API key)
        *
@@ -3784,16 +3576,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request POST:/api/public/projects/{projectId}/apiKeys
        * @secure
        */
-      projectsCreateApiKey: (projectId, data, params = {}) =>
-        this.request({
-          path: `/api/public/projects/${projectId}/apiKeys`,
-          method: "POST",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      projectsCreateApiKey: (projectId, data, params = {}) => this.request({
+        path: `/api/public/projects/${projectId}/apiKeys`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Delete a project by ID (requires organization-scoped API key). Project deletion is processed asynchronously.
        *
@@ -3802,14 +3593,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request DELETE:/api/public/projects/{projectId}
        * @secure
        */
-      projectsDelete: (projectId, params = {}) =>
-        this.request({
-          path: `/api/public/projects/${projectId}`,
-          method: "DELETE",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      projectsDelete: (projectId, params = {}) => this.request({
+        path: `/api/public/projects/${projectId}`,
+        method: "DELETE",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Delete an API key for a project (requires organization-scoped API key)
        *
@@ -3818,14 +3608,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request DELETE:/api/public/projects/{projectId}/apiKeys/{apiKeyId}
        * @secure
        */
-      projectsDeleteApiKey: (projectId, apiKeyId, params = {}) =>
-        this.request({
-          path: `/api/public/projects/${projectId}/apiKeys/${apiKeyId}`,
-          method: "DELETE",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      projectsDeleteApiKey: (projectId, apiKeyId, params = {}) => this.request({
+        path: `/api/public/projects/${projectId}/apiKeys/${apiKeyId}`,
+        method: "DELETE",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get Project associated with API key
        *
@@ -3834,14 +3623,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/projects
        * @secure
        */
-      projectsGet: (params = {}) =>
-        this.request({
-          path: `/api/public/projects`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      projectsGet: (params = {}) => this.request({
+        path: `/api/public/projects`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get all API keys for a project (requires organization-scoped API key)
        *
@@ -3850,14 +3638,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/projects/{projectId}/apiKeys
        * @secure
        */
-      projectsGetApiKeys: (projectId, params = {}) =>
-        this.request({
-          path: `/api/public/projects/${projectId}/apiKeys`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      projectsGetApiKeys: (projectId, params = {}) => this.request({
+        path: `/api/public/projects/${projectId}/apiKeys`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Update a project by ID (requires organization-scoped API key).
        *
@@ -3866,16 +3653,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request PUT:/api/public/projects/{projectId}
        * @secure
        */
-      projectsUpdate: (projectId, data, params = {}) =>
-        this.request({
-          path: `/api/public/projects/${projectId}`,
-          method: "PUT",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      projectsUpdate: (projectId, data, params = {}) => this.request({
+        path: `/api/public/projects/${projectId}`,
+        method: "PUT",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Create a new version for the prompt with the given `name`
        *
@@ -3884,16 +3670,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request POST:/api/public/v2/prompts
        * @secure
        */
-      promptsCreate: (data, params = {}) =>
-        this.request({
-          path: `/api/public/v2/prompts`,
-          method: "POST",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      promptsCreate: (data, params = {}) => this.request({
+        path: `/api/public/v2/prompts`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get a prompt
        *
@@ -3902,15 +3687,17 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/v2/prompts/{promptName}
        * @secure
        */
-      promptsGet: ({ promptName, ...query }, params = {}) =>
-        this.request({
-          path: `/api/public/v2/prompts/${promptName}`,
-          method: "GET",
-          query,
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      promptsGet: ({
+        promptName,
+        ...query
+      }, params = {}) => this.request({
+        path: `/api/public/v2/prompts/${promptName}`,
+        method: "GET",
+        query,
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get a list of prompt names with versions and labels
        *
@@ -3919,15 +3706,14 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/v2/prompts
        * @secure
        */
-      promptsList: (query, params = {}) =>
-        this.request({
-          path: `/api/public/v2/prompts`,
-          method: "GET",
-          query,
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      promptsList: (query, params = {}) => this.request({
+        path: `/api/public/v2/prompts`,
+        method: "GET",
+        query,
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Update labels for a specific prompt version
        *
@@ -3936,16 +3722,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request PATCH:/api/public/v2/prompts/{name}/versions/{version}
        * @secure
        */
-      promptVersionUpdate: (name, version2, data, params = {}) =>
-        this.request({
-          path: `/api/public/v2/prompts/${name}/versions/${version2}`,
-          method: "PATCH",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      promptVersionUpdate: (name, version2, data, params = {}) => this.request({
+        path: `/api/public/v2/prompts/${name}/versions/${version2}`,
+        method: "PATCH",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Create a new user in the organization (requires organization-scoped API key)
        *
@@ -3954,16 +3739,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request POST:/api/public/scim/Users
        * @secure
        */
-      scimCreateUser: (data, params = {}) =>
-        this.request({
-          path: `/api/public/scim/Users`,
-          method: "POST",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      scimCreateUser: (data, params = {}) => this.request({
+        path: `/api/public/scim/Users`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Remove a user from the organization (requires organization-scoped API key). Note that this only removes the user from the organization but does not delete the user entity itself.
        *
@@ -3972,14 +3756,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request DELETE:/api/public/scim/Users/{userId}
        * @secure
        */
-      scimDeleteUser: (userId, params = {}) =>
-        this.request({
-          path: `/api/public/scim/Users/${userId}`,
-          method: "DELETE",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      scimDeleteUser: (userId, params = {}) => this.request({
+        path: `/api/public/scim/Users/${userId}`,
+        method: "DELETE",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get SCIM Resource Types (requires organization-scoped API key)
        *
@@ -3988,14 +3771,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/scim/ResourceTypes
        * @secure
        */
-      scimGetResourceTypes: (params = {}) =>
-        this.request({
-          path: `/api/public/scim/ResourceTypes`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      scimGetResourceTypes: (params = {}) => this.request({
+        path: `/api/public/scim/ResourceTypes`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get SCIM Schemas (requires organization-scoped API key)
        *
@@ -4004,14 +3786,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/scim/Schemas
        * @secure
        */
-      scimGetSchemas: (params = {}) =>
-        this.request({
-          path: `/api/public/scim/Schemas`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      scimGetSchemas: (params = {}) => this.request({
+        path: `/api/public/scim/Schemas`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get SCIM Service Provider Configuration (requires organization-scoped API key)
        *
@@ -4020,14 +3801,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/scim/ServiceProviderConfig
        * @secure
        */
-      scimGetServiceProviderConfig: (params = {}) =>
-        this.request({
-          path: `/api/public/scim/ServiceProviderConfig`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      scimGetServiceProviderConfig: (params = {}) => this.request({
+        path: `/api/public/scim/ServiceProviderConfig`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get a specific user by ID (requires organization-scoped API key)
        *
@@ -4036,14 +3816,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/scim/Users/{userId}
        * @secure
        */
-      scimGetUser: (userId, params = {}) =>
-        this.request({
-          path: `/api/public/scim/Users/${userId}`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      scimGetUser: (userId, params = {}) => this.request({
+        path: `/api/public/scim/Users/${userId}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description List users in the organization (requires organization-scoped API key)
        *
@@ -4052,15 +3831,14 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/scim/Users
        * @secure
        */
-      scimListUsers: (query, params = {}) =>
-        this.request({
-          path: `/api/public/scim/Users`,
-          method: "GET",
-          query,
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      scimListUsers: (query, params = {}) => this.request({
+        path: `/api/public/scim/Users`,
+        method: "GET",
+        query,
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Create a score configuration (config). Score configs are used to define the structure of scores
        *
@@ -4069,16 +3847,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request POST:/api/public/score-configs
        * @secure
        */
-      scoreConfigsCreate: (data, params = {}) =>
-        this.request({
-          path: `/api/public/score-configs`,
-          method: "POST",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      scoreConfigsCreate: (data, params = {}) => this.request({
+        path: `/api/public/score-configs`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get all score configs
        *
@@ -4087,15 +3864,14 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/score-configs
        * @secure
        */
-      scoreConfigsGet: (query, params = {}) =>
-        this.request({
-          path: `/api/public/score-configs`,
-          method: "GET",
-          query,
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      scoreConfigsGet: (query, params = {}) => this.request({
+        path: `/api/public/score-configs`,
+        method: "GET",
+        query,
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get a score config
        *
@@ -4104,14 +3880,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/score-configs/{configId}
        * @secure
        */
-      scoreConfigsGetById: (configId, params = {}) =>
-        this.request({
-          path: `/api/public/score-configs/${configId}`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      scoreConfigsGetById: (configId, params = {}) => this.request({
+        path: `/api/public/score-configs/${configId}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Create a score (supports both trace and session scores)
        *
@@ -4120,16 +3895,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request POST:/api/public/scores
        * @secure
        */
-      scoreCreate: (data, params = {}) =>
-        this.request({
-          path: `/api/public/scores`,
-          method: "POST",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      scoreCreate: (data, params = {}) => this.request({
+        path: `/api/public/scores`,
+        method: "POST",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Delete a score (supports both trace and session scores)
        *
@@ -4138,13 +3912,12 @@ var LangfusePublicApi = class extends HttpClient {
        * @request DELETE:/api/public/scores/{scoreId}
        * @secure
        */
-      scoreDelete: (scoreId, params = {}) =>
-        this.request({
-          path: `/api/public/scores/${scoreId}`,
-          method: "DELETE",
-          secure: true,
-          ...params,
-        }),
+      scoreDelete: (scoreId, params = {}) => this.request({
+        path: `/api/public/scores/${scoreId}`,
+        method: "DELETE",
+        secure: true,
+        ...params
+      }),
       /**
        * @description Get a list of scores (supports both trace and session scores)
        *
@@ -4153,15 +3926,14 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/v2/scores
        * @secure
        */
-      scoreV2Get: (query, params = {}) =>
-        this.request({
-          path: `/api/public/v2/scores`,
-          method: "GET",
-          query,
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      scoreV2Get: (query, params = {}) => this.request({
+        path: `/api/public/v2/scores`,
+        method: "GET",
+        query,
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get a score (supports both trace and session scores)
        *
@@ -4170,14 +3942,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/v2/scores/{scoreId}
        * @secure
        */
-      scoreV2GetById: (scoreId, params = {}) =>
-        this.request({
-          path: `/api/public/v2/scores/${scoreId}`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      scoreV2GetById: (scoreId, params = {}) => this.request({
+        path: `/api/public/v2/scores/${scoreId}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get a session. Please note that `traces` on this endpoint are not paginated, if you plan to fetch large sessions, consider `GET /api/public/traces?sessionId=<sessionId>`
        *
@@ -4186,14 +3957,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/sessions/{sessionId}
        * @secure
        */
-      sessionsGet: (sessionId, params = {}) =>
-        this.request({
-          path: `/api/public/sessions/${sessionId}`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      sessionsGet: (sessionId, params = {}) => this.request({
+        path: `/api/public/sessions/${sessionId}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get sessions
        *
@@ -4202,15 +3972,14 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/sessions
        * @secure
        */
-      sessionsList: (query, params = {}) =>
-        this.request({
-          path: `/api/public/sessions`,
-          method: "GET",
-          query,
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      sessionsList: (query, params = {}) => this.request({
+        path: `/api/public/sessions`,
+        method: "GET",
+        query,
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Delete a specific trace
        *
@@ -4219,14 +3988,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request DELETE:/api/public/traces/{traceId}
        * @secure
        */
-      traceDelete: (traceId, params = {}) =>
-        this.request({
-          path: `/api/public/traces/${traceId}`,
-          method: "DELETE",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      traceDelete: (traceId, params = {}) => this.request({
+        path: `/api/public/traces/${traceId}`,
+        method: "DELETE",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Delete multiple traces
        *
@@ -4235,16 +4003,15 @@ var LangfusePublicApi = class extends HttpClient {
        * @request DELETE:/api/public/traces
        * @secure
        */
-      traceDeleteMultiple: (data, params = {}) =>
-        this.request({
-          path: `/api/public/traces`,
-          method: "DELETE",
-          body: data,
-          secure: true,
-          type: ContentType.Json,
-          format: "json",
-          ...params,
-        }),
+      traceDeleteMultiple: (data, params = {}) => this.request({
+        path: `/api/public/traces`,
+        method: "DELETE",
+        body: data,
+        secure: true,
+        type: ContentType.Json,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get a specific trace
        *
@@ -4253,14 +4020,13 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/traces/{traceId}
        * @secure
        */
-      traceGet: (traceId, params = {}) =>
-        this.request({
-          path: `/api/public/traces/${traceId}`,
-          method: "GET",
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      traceGet: (traceId, params = {}) => this.request({
+        path: `/api/public/traces/${traceId}`,
+        method: "GET",
+        secure: true,
+        format: "json",
+        ...params
+      }),
       /**
        * @description Get list of traces
        *
@@ -4269,15 +4035,14 @@ var LangfusePublicApi = class extends HttpClient {
        * @request GET:/api/public/traces
        * @secure
        */
-      traceList: (query, params = {}) =>
-        this.request({
-          path: `/api/public/traces`,
-          method: "GET",
-          query,
-          secure: true,
-          format: "json",
-          ...params,
-        }),
+      traceList: (query, params = {}) => this.request({
+        path: `/api/public/traces`,
+        method: "GET",
+        query,
+        secure: true,
+        format: "json",
+        ...params
+      })
     };
   }
 };
@@ -4287,9 +4052,7 @@ var Langfuse = class extends LangfuseCore {
     const langfuseConfig = utils.configLangfuseSDK(params);
     super(langfuseConfig);
     if (typeof window !== "undefined" && "Deno" in window === false) {
-      this._storageKey = params?.persistence_name
-        ? `lf_${params.persistence_name}`
-        : `lf_${langfuseConfig.publicKey}_langfuse`;
+      this._storageKey = params?.persistence_name ? `lf_${params.persistence_name}` : `lf_${langfuseConfig.publicKey}_langfuse`;
       this._storage = getStorage(params?.persistence || "localStorage", window);
     } else {
       this._storageKey = `lf_${langfuseConfig.publicKey}_langfuse`;
@@ -4305,9 +4068,9 @@ var Langfuse = class extends LangfuseCore {
           "X-Langfuse-Sdk-Integration": this.sdkIntegration,
           "X-Langfuse-Public-Key": this.publicKey,
           ...this.additionalHeaders,
-          ...this.constructAuthorizationHeader(this.publicKey, this.secretKey),
-        },
-      },
+          ...this.constructAuthorizationHeader(this.publicKey, this.secretKey)
+        }
+      }
     }).api;
   }
   getPersistedProperty(key) {
@@ -4361,239 +4124,6 @@ import { randomUUID } from "node:crypto";
 // dist/transcript.js
 import { readFileSync, statSync as statSync2, openSync, readSync, closeSync } from "node:fs";
 var MAX_FULL_READ_BYTES = 50 * 1024 * 1024;
-function readTranscript(filePath, afterLine = -1) {
-  let size;
-  try {
-    size = statSync2(filePath).size;
-  } catch {
-    return { messages: [], lastLine: afterLine };
-  }
-  if (size <= MAX_FULL_READ_BYTES) {
-    const raw = readFileSync(filePath, "utf-8");
-    const lines = raw.split("\n").filter((l) => l.trim() !== "");
-    const messages = [];
-    let lastLine = afterLine;
-    for (let i = 0; i < lines.length; i++) {
-      lastLine = i;
-      if (i <= afterLine) continue;
-      try {
-        messages.push(JSON.parse(lines[i]));
-      } catch {}
-    }
-    return { messages, lastLine };
-  }
-  const fd = openSync(filePath, "r");
-  try {
-    const chunkSize = 2 * 1024 * 1024;
-    const buf = Buffer.alloc(chunkSize);
-    const messages = [];
-    let lastLine = afterLine;
-    let lineIndex = -1;
-    let partial = "";
-    let bytesRead;
-    let pos = 0;
-    while ((bytesRead = readSync(fd, buf, 0, chunkSize, pos)) > 0) {
-      const chunk = partial + buf.toString("utf-8", 0, bytesRead);
-      partial = "";
-      const lines = chunk.split("\n");
-      partial = lines.pop() ?? "";
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed === "") continue;
-        lineIndex++;
-        lastLine = lineIndex;
-        if (lineIndex <= afterLine) continue;
-        try {
-          messages.push(JSON.parse(trimmed));
-        } catch {}
-      }
-      pos += bytesRead;
-    }
-    if (partial.trim() !== "") {
-      lineIndex++;
-      lastLine = lineIndex;
-      if (lineIndex > afterLine) {
-        try {
-          messages.push(JSON.parse(partial.trim()));
-        } catch {}
-      }
-    }
-    return { messages, lastLine };
-  } finally {
-    closeSync(fd);
-  }
-}
-function isHumanMessage(msg) {
-  if (msg.type !== "user") return false;
-  if (typeof msg.message.content === "string") return true;
-  if (Array.isArray(msg.message.content)) {
-    return !msg.message.content.some((b) => b.type === "tool_result");
-  }
-  return false;
-}
-function isToolResult(msg) {
-  if (msg.type !== "user" || !Array.isArray(msg.message.content)) return false;
-  return msg.message.content.some((b) => b.type === "tool_result");
-}
-function isAssistantMessage(msg) {
-  return msg.type === "assistant";
-}
-function stripModelDateSuffix(model) {
-  return model.replace(/-\d{8}$/, "");
-}
-function extractText(blocks) {
-  return blocks
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
-    .join("\n");
-}
-function extractThinking(blocks) {
-  return blocks
-    .filter((b) => b.type === "thinking")
-    .map((b) => b.thinking)
-    .join("\n");
-}
-function mergeAssistantChunks(chunks) {
-  if (chunks.length === 0) {
-    throw new Error("Cannot merge zero chunks");
-  }
-  const first = chunks[0];
-  const last = chunks[chunks.length - 1];
-  const allBlocks = chunks.flatMap((c) => c.message.content);
-  const merged = mergeAdjacentTextBlocks(allBlocks);
-  return {
-    content: merged,
-    model: stripModelDateSuffix(first.message.model),
-    usage: last.message.usage,
-    startTime: first.timestamp,
-    endTime: last.timestamp,
-    stopReason: last.message.stop_reason,
-  };
-}
-function mergeAdjacentTextBlocks(blocks) {
-  const result = [];
-  let textBuffer = null;
-  for (const block of blocks) {
-    if (block.type === "text") {
-      textBuffer = (textBuffer ?? "") + block.text;
-    } else {
-      if (textBuffer !== null) {
-        result.push({ type: "text", text: textBuffer });
-        textBuffer = null;
-      }
-      result.push(block);
-    }
-  }
-  if (textBuffer !== null) {
-    result.push({ type: "text", text: textBuffer });
-  }
-  return result;
-}
-function findToolResult(toolUseId, toolResults) {
-  for (const msg of toolResults) {
-    for (const block of msg.message.content) {
-      if (block.type === "tool_result" && block.tool_use_id === toolUseId) {
-        const content =
-          typeof block.content === "string"
-            ? block.content
-            : block.content
-                .filter((c) => c.type === "text")
-                .map((c) => c.text)
-                .join(" ");
-        return {
-          content,
-          timestamp: msg.timestamp,
-          agentId: msg.toolUseResult?.agentId,
-          durationMs: msg.toolUseResult?.durationMs,
-        };
-      }
-    }
-  }
-  return void 0;
-}
-function groupIntoTurns(messages) {
-  const turns = [];
-  let currentPromptId = null;
-  let currentUser = null;
-  let assistantChunks = /* @__PURE__ */ new Map();
-  let assistantOrder = [];
-  let toolResults = [];
-  let hasStopReasonEndTurn = false;
-  function finalizeTurn(forceIncomplete = false) {
-    if (!currentUser) return;
-    if (assistantChunks.size === 0) return;
-    const assistantMessages = Array.from(assistantChunks.values()).flat();
-    const hasStopReasonField = assistantMessages.some((m) => m.message.stop_reason !== void 0);
-    const isComplete = hasStopReasonEndTurn || (!forceIncomplete && !hasStopReasonField);
-    const llmCalls = [];
-    for (const msgId of assistantOrder) {
-      const chunks = assistantChunks.get(msgId);
-      if (!chunks || chunks.length === 0) continue;
-      const merged = mergeAssistantChunks(chunks);
-      const toolUses = merged.content.filter((b) => b.type === "tool_use");
-      const toolCalls = toolUses.map((tu) => {
-        const result = findToolResult(tu.id, toolResults);
-        return {
-          tool_use: tu,
-          result: result
-            ? {
-                content: result.content,
-                timestamp: result.timestamp,
-                durationMs: result.durationMs,
-              }
-            : void 0,
-          agentId: result?.agentId,
-        };
-      });
-      llmCalls.push({
-        content: merged.content,
-        model: merged.model,
-        usage: merged.usage,
-        startTime: merged.startTime,
-        endTime: merged.endTime,
-        toolCalls,
-        stopReason: merged.stopReason,
-      });
-    }
-    turns.push({
-      userContent: currentUser.message.content,
-      userTimestamp: currentUser.timestamp,
-      llmCalls,
-      isComplete,
-    });
-  }
-  for (const msg of messages) {
-    if (isHumanMessage(msg)) {
-      const isNewTurn =
-        currentUser === null ||
-        (msg.promptId !== void 0 && msg.promptId !== currentPromptId) ||
-        msg.promptId === void 0;
-      if (isNewTurn) {
-        finalizeTurn();
-        currentPromptId = msg.promptId;
-        currentUser = msg;
-        assistantChunks = /* @__PURE__ */ new Map();
-        assistantOrder = [];
-        toolResults = [];
-        hasStopReasonEndTurn = false;
-      }
-    } else if (isToolResult(msg)) {
-      toolResults.push(msg);
-    } else if (isAssistantMessage(msg)) {
-      const id = msg.message.id ?? "__no_id__";
-      if (!assistantChunks.has(id)) {
-        assistantChunks.set(id, []);
-        assistantOrder.push(id);
-      }
-      assistantChunks.get(id).push(msg);
-      if (msg.message.stop_reason === "end_turn") {
-        hasStopReasonEndTurn = true;
-      }
-    }
-  }
-  finalizeTurn(true);
-  return turns;
-}
 
 // dist/langfuse.js
 var client = null;
@@ -4610,231 +4140,69 @@ async function flushTraces() {
   await client.flushAsync();
   debug("Langfuse traces flushed");
 }
-var maxChars = 5e4;
-function setMaxChars(max) {
-  maxChars = max;
+async function shutdownClient() {
+  if (!client)
+    return;
+  try {
+    await client.shutdownAsync();
+  } catch {
+  }
 }
-function truncate(text) {
-  if (!text || text.length <= maxChars) return text;
-  return (
-    text.slice(0, maxChars) +
-    `
+function postScore(options) {
+  if (!client) {
+    warn("Cannot post score: client not initialized");
+    return;
+  }
+  client.score({
+    id: options.id,
+    name: options.name,
+    value: options.value,
+    comment: options.comment,
+    traceId: options.traceId,
+    sessionId: options.sessionId
+  });
+}
 
-[...truncated, ${text.length - maxChars} more chars]`
-  );
+// dist/scoring/parse.js
+function isParseError(result) {
+  return "error" in result;
 }
-function truncateValue(v) {
-  if (typeof v === "string") return truncate(v);
-  if (Array.isArray(v)) return v.map(truncateValue);
-  if (v && typeof v === "object") {
-    const result = {};
-    for (const [key, val] of Object.entries(v)) {
-      result[key] = truncateValue(val);
-    }
-    return result;
+function parseArgs(argv) {
+  const trimmed = argv.trim();
+  if (trimmed.length === 0) {
+    return { error: "missing direction", hint: "received empty argument" };
   }
-  return v;
+  const match = trimmed.match(/^(\S+)(?:\s+([\s\S]*))?$/);
+  if (!match) {
+    return { error: "could not parse argument", hint: `received: '${argv}'` };
+  }
+  const directionRaw = match[1].toLowerCase();
+  if (directionRaw !== "up" && directionRaw !== "down") {
+    return {
+      error: `unknown direction '${match[1]}'`,
+      hint: `received: '${match[1]}'`
+    };
+  }
+  const direction = directionRaw;
+  const commentRaw = match[2]?.trim();
+  const comment = commentRaw && commentRaw.length > 0 ? commentRaw : void 0;
+  return comment !== void 0 ? { direction, comment } : { direction };
 }
-function buildUsage(usage) {
-  const details = {};
-  if (usage.input_tokens > 0) details.input = usage.input_tokens;
-  if (usage.output_tokens > 0) details.output = usage.output_tokens;
-  if (usage.input_tokens > 0 || usage.output_tokens > 0) {
-    details.total = (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0);
-  }
-  return Object.keys(details).length > 0 ? details : void 0;
+
+// dist/scoring/id.js
+import { createHash } from "node:crypto";
+function computeScoreId(targetId, name) {
+  const digest = createHash("sha256").update(`${targetId}:${name}`).digest();
+  const hex = digest.subarray(0, 16).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
-function emitTurn(options) {
-  const { sessionId, turnNum, turn, transcriptName, traceId, toolStartTimes } = options;
-  if (!client) throw new Error("Langfuse client not initialized \u2014 call initClient() first");
-  const traceName = `Claude Code - Turn ${turnNum}`;
-  const userText =
-    typeof turn.userContent === "string"
-      ? truncate(turn.userContent)
-      : JSON.stringify(turn.userContent);
-  const finalText =
-    turn.llmCalls.length > 0
-      ? truncate(extractText(turn.llmCalls[turn.llmCalls.length - 1].content))
-      : "";
-  const trace = client.trace({
-    id: traceId || randomUUID(),
-    name: traceName,
-    sessionId,
-    input: { role: "user", content: userText },
-    output: { role: "assistant", content: finalText },
-    tags: ["claude-code"],
-    metadata: {
-      source: "claude-code",
-      turn_number: turnNum,
-      transcript: transcriptName,
-      is_complete: turn.isComplete,
-    },
-  });
-  for (let i = 0; i < turn.llmCalls.length; i++) {
-    emitLLMCall(trace, i + 1, turn.llmCalls.length, turn.llmCalls[i], userText, toolStartTimes);
-  }
-  return trace.id;
-}
-function emitLLMCall(trace, index, total, llm, userText, toolStartTimes) {
-  const genName = total > 1 ? `LLM Call ${index}/${total}` : "Claude Response";
-  const text = truncate(extractText(llm.content));
-  const thinking = extractThinking(llm.content);
-  const output = { role: "assistant", text };
-  if (thinking) output.thinking = truncate(thinking);
-  if (llm.toolCalls.length > 0) {
-    output.tool_calls = llm.toolCalls.map((tc) => ({
-      name: tc.tool_use.name,
-      id: tc.tool_use.id,
-    }));
-  }
-  const usage = buildUsage(llm.usage);
-  const gen = trace.generation({
-    name: genName,
-    model: llm.model,
-    input: { role: "user", content: userText },
-    output,
-    usage,
-    metadata: {
-      stop_reason: llm.stopReason ?? "",
-      timestamp: llm.endTime,
-      has_thinking: String(!!thinking),
-      ...(llm.usage.cache_read_input_tokens
-        ? { cache_read_input_tokens: llm.usage.cache_read_input_tokens }
-        : {}),
-      ...(llm.usage.cache_creation_input_tokens
-        ? { cache_creation_input_tokens: llm.usage.cache_creation_input_tokens }
-        : {}),
-      ...(llm.synthetic ? { synthetic: true } : {}),
-    },
-    startTime: new Date(llm.startTime),
-    endTime: new Date(llm.endTime),
-  });
-  for (const tc of llm.toolCalls) {
-    emitTool(gen, tc, toolStartTimes);
-  }
-  gen.end();
-}
-function emitTool(parent, tc, toolStartTimes) {
-  const toolInput = truncateValue(tc.tool_use.input);
-  const toolOutput = tc.result ? truncateValue(tc.result.content) : void 0;
-  const meta = { tool_id: tc.tool_use.id };
-  if (tc.result?.durationMs !== void 0) {
-    meta.duration_ms = tc.result.durationMs;
-  }
-  if (tc.result?.timestamp) {
-    meta.timestamp = tc.result.timestamp;
-  }
-  if (tc.agentId) {
-    meta.agent_id = tc.agentId;
-  }
-  const wallClockStart = toolStartTimes?.[tc.tool_use.id];
-  const startTime = wallClockStart ? new Date(wallClockStart) : void 0;
-  const endTime = tc.result?.timestamp ? new Date(tc.result.timestamp) : void 0;
-  const span = parent.span({
-    name: `Tool: ${tc.tool_use.name}`,
-    input: toolInput,
-    output: toolOutput,
-    metadata: meta,
-    startTime,
-    endTime,
-  });
-  span.end();
-}
-async function closeInterruptedTurn(options) {
-  const { sessionId, sessionState, transcriptPath, config } = options;
-  if (!client) throw new Error("Langfuse client not initialized");
-  let lastLine = sessionState.last_line;
-  let turnsTraced = 0;
-  if (transcriptPath) {
-    try {
-      const { messages, lastLine: newLastLine } = readTranscript(
-        transcriptPath,
-        sessionState.last_line,
-      );
-      if (messages.length > 0) {
-        const turns = groupIntoTurns(messages);
-        if (turns.length > 0) {
-          setMaxChars(config.maxChars);
-          emitTurn({
-            sessionId,
-            turnNum: sessionState.turn_count + 1,
-            turn: turns[turns.length - 1],
-            transcriptName: transcriptPath.split("/").pop() ?? "",
-            traceId: sessionState.current_trace_id,
-            toolStartTimes: sessionState.tool_start_times,
-          });
-          lastLine = newLastLine;
-          turnsTraced = 1;
-        }
-      }
-    } catch (err) {
-      error(`Failed to trace interrupted turn transcript: ${err}`);
-    }
-  }
-  if (sessionState.current_trace_id) {
-    try {
-      client.trace({
-        id: sessionState.current_trace_id,
-        metadata: { interrupted: true, error: "User interrupt" },
-        tags: ["claude-code", "interrupted"],
-      });
-    } catch (err) {
-      error(`Failed to update interrupted trace: ${err}`);
-    }
-  }
-  await flushTraces();
-  return { lastLine, turnsTraced };
-}
+
+// dist/scoring/lookup.js
+import { realpathSync } from "node:fs";
 
 // dist/state.js
-import {
-  readFileSync as readFileSync2,
-  writeFileSync,
-  mkdirSync as mkdirSync2,
-  openSync as openSync2,
-  closeSync as closeSync2,
-  unlinkSync,
-} from "node:fs";
+import { readFileSync as readFileSync2, writeFileSync, mkdirSync as mkdirSync2, openSync as openSync2, closeSync as closeSync2, unlinkSync } from "node:fs";
 import { dirname as dirname2 } from "node:path";
-var LOCK_TIMEOUT_MS = 5e3;
-var LOCK_RETRY_MS = 20;
-function lockPath(stateFilePath) {
-  return `${stateFilePath}.lock`;
-}
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-async function acquireLock(stateFilePath) {
-  const lock = lockPath(stateFilePath);
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-  mkdirSync2(dirname2(stateFilePath), { recursive: true });
-  while (Date.now() < deadline) {
-    try {
-      const fd = openSync2(lock, "wx");
-      closeSync2(fd);
-      return;
-    } catch {
-      await sleep(LOCK_RETRY_MS);
-    }
-  }
-  try {
-    unlinkSync(lock);
-  } catch {}
-}
-function releaseLock(stateFilePath) {
-  try {
-    unlinkSync(lockPath(stateFilePath));
-  } catch {}
-}
-async function atomicUpdateState(stateFilePath, fn) {
-  await acquireLock(stateFilePath);
-  try {
-    const state = loadState(stateFilePath);
-    writeFileSync(stateFilePath, JSON.stringify(fn(state), null, 2));
-  } finally {
-    releaseLock(stateFilePath);
-  }
-}
 function loadState(stateFilePath) {
   try {
     const raw = readFileSync2(stateFilePath, "utf-8");
@@ -4843,115 +4211,127 @@ function loadState(stateFilePath) {
     return {};
   }
 }
+var RESERVED_KEYS = /* @__PURE__ */ new Set(["_active_by_cwd"]);
+var DEFAULT_SESSION = {
+  last_line: -1,
+  turn_count: 0,
+  updated: "",
+  task_run_map: {}
+};
+function isReservedShape(value) {
+  if (typeof value !== "object" || value === null)
+    return false;
+  const v = value;
+  return typeof v.last_line !== "number";
+}
 function getSessionState(state, sessionId) {
-  return (
-    state[sessionId] ?? {
-      last_line: -1,
-      turn_count: 0,
-      updated: "",
-      task_run_map: {},
-    }
-  );
+  if (RESERVED_KEYS.has(sessionId))
+    return { ...DEFAULT_SESSION };
+  const entry = state[sessionId];
+  if (!entry || isReservedShape(entry))
+    return { ...DEFAULT_SESSION };
+  return entry;
+}
+function getActiveByCwd(state, cwd) {
+  return state._active_by_cwd?.[cwd];
 }
 var SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1e3;
 
-// dist/config.js
-function loadConfig() {
-  const publicKey = process.env.CC_LANGFUSE_PUBLIC_KEY ?? process.env.LANGFUSE_PUBLIC_KEY ?? "";
-  const secretKey = process.env.CC_LANGFUSE_SECRET_KEY ?? process.env.LANGFUSE_SECRET_KEY ?? "";
-  const baseUrl =
-    process.env.CC_LANGFUSE_BASE_URL ??
-    process.env.LANGFUSE_BASE_URL ??
-    "https://cloud.langfuse.com";
-  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "";
-  const stateFilePath = process.env.STATE_FILE ?? `${homeDir}/.claude/state/langfuse_state.json`;
-  const debug2 = (process.env.CC_LANGFUSE_DEBUG ?? "").toLowerCase() === "true";
-  const maxChars2 = parseInt(process.env.CC_LANGFUSE_MAX_CHARS ?? "50000", 10);
-  return { publicKey, secretKey, baseUrl, stateFilePath, debug: debug2, maxChars: maxChars2 };
+// dist/scoring/lookup.js
+function isLookupFailure(result) {
+  return "kind" in result;
 }
-
-// dist/utils/hook-init.js
-function initHook() {
-  const config = loadConfig();
-  initLogger(config.debug);
-  if (process.env.TRACE_TO_LANGFUSE?.toLowerCase() !== "true") {
-    return null;
+function resolveFeedbackTarget(stateFilePath, cwd) {
+  const realCwd = safeRealpath(cwd);
+  const state = loadState(stateFilePath);
+  const sessionId = getActiveByCwd(state, realCwd);
+  if (!sessionId) {
+    return { kind: "no_session", cwd: realCwd };
   }
-  if (!config.publicKey || !config.secretKey) {
-    error(
-      "No Langfuse credentials set (CC_LANGFUSE_PUBLIC_KEY/CC_LANGFUSE_SECRET_KEY or LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY)",
-    );
-    return null;
+  const sessionState = getSessionState(state, sessionId);
+  const lastSubstantiveTraceId = sessionState.last_substantive_trace_id;
+  if (!lastSubstantiveTraceId) {
+    return { kind: "no_substantive_turn", sessionId };
   }
-  return config;
+  return { sessionId, lastSubstantiveTraceId };
 }
-function expandHome(path) {
-  return path?.replace(/^~/, process.env.HOME ?? "");
-}
-
-// dist/utils/stdin.js
-function readStdin() {
-  return new Promise((resolve, reject) => {
-    let data = "";
-    process.stdin.setEncoding("utf-8");
-    process.stdin.on("data", (chunk) => (data += chunk));
-    process.stdin.on("end", () => {
-      try {
-        resolve(JSON.parse(data));
-      } catch (err) {
-        reject(new Error(`Failed to parse hook input: ${err}`));
-      }
-    });
-    process.stdin.on("error", reject);
-  });
+function safeRealpath(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }
 
-// dist/hooks/session-end.js
+// dist/commands/feedback.js
+var SCORE_NAME = "turn_feedback";
+var USAGE_HINT = "Usage: /feedback up|down [optional comment]";
+var FLUSH_TIMEOUT_MS = 2e3;
 async function main() {
-  const input = await readStdin();
   const config = initHook();
-  if (!config) return;
-  debug(`SessionEnd hook: session=${input.session_id}, reason=${input.reason}`);
-  const state = loadState(config.stateFilePath);
-  const sessionState = getSessionState(state, input.session_id);
-  if (!sessionState.current_trace_id) {
-    debug("No open trace \u2014 nothing to close");
+  if (!config)
+    return;
+  const argv = process.argv.slice(2).join(" ");
+  const parsed = parseArgs(argv);
+  if (isParseError(parsed)) {
+    debug(`parseArgs: ${parsed.error}`);
+    console.log(USAGE_HINT);
+    if (parsed.hint)
+      console.log(`(${parsed.hint})`);
     return;
   }
+  const target = resolveFeedbackTarget(config.stateFilePath, process.cwd());
+  if (isLookupFailure(target)) {
+    if (target.kind === "no_session") {
+      debug(`lookup: no_session for cwd=${target.cwd}`);
+      console.log("No traced session found for this directory. Is TRACE_TO_LANGFUSE=true?");
+    } else {
+      debug(`lookup: no_substantive_turn for session=${target.sessionId}`);
+      console.log("No completed turn yet to score. Try /feedback after Claude has responded.");
+    }
+    return;
+  }
+  const scoreId = computeScoreId(target.lastSubstantiveTraceId, SCORE_NAME);
+  const value = parsed.direction === "up" ? 1 : -1;
   initClient(config.publicKey, config.secretKey, config.baseUrl);
-  setMaxChars(config.maxChars);
-  debug(`Closing interrupted turn (trace ${sessionState.current_trace_id}) on session end`);
+  let postFailed = false;
   try {
-    const { lastLine, turnsTraced } = await closeInterruptedTurn({
-      sessionId: input.session_id,
-      sessionState,
-      transcriptPath: expandHome(input.transcript_path),
-      config: { maxChars: config.maxChars },
+    postScore({
+      id: scoreId,
+      name: SCORE_NAME,
+      value,
+      comment: parsed.comment,
+      traceId: target.lastSubstantiveTraceId
     });
-    await atomicUpdateState(config.stateFilePath, (s) => {
-      const ss = getSessionState(s, input.session_id);
-      return {
-        ...s,
-        [input.session_id]: {
-          ...ss,
-          last_line: lastLine,
-          turn_count: ss.turn_count + turnsTraced,
-          current_trace_id: void 0,
-          task_run_map: {},
-          tool_start_times: {},
-          pending_subagent_traces: [],
-        },
-      };
-    });
-    debug(`Closed interrupted turn on session end (reason=${input.reason})`);
+    debug(`score posted: id=${scoreId} name=${SCORE_NAME} value=${value > 0 ? "+1" : "-1"} traceId=${target.lastSubstantiveTraceId}`);
+    await flushWithTimeout(FLUSH_TIMEOUT_MS);
   } catch (err) {
-    error(`Failed to close interrupted turn on session end: ${err}`);
+    postFailed = true;
+    error(`score() failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+  } finally {
+    await shutdownClient();
+  }
+  if (postFailed) {
+    console.log("Feedback recorded locally; sync may be delayed.");
+  } else {
+    const valueStr = value > 0 ? "+1" : "-1";
+    const traceShort = target.lastSubstantiveTraceId.slice(0, 8);
+    console.log(`\u2713 ${SCORE_NAME} ${valueStr} recorded for trace ${traceShort}\u2026`);
+  }
+}
+async function flushWithTimeout(timeoutMs) {
+  const timeout = new Promise((resolve) => setTimeout(resolve, timeoutMs));
+  try {
+    await Promise.race([flushTraces(), timeout]);
+  } catch (err) {
+    error(`flush failed: ${err}`);
   }
 }
 main().catch((err) => {
   try {
-    error(`SessionEnd hook fatal error: ${err}`);
-  } catch {}
+    error(`feedback CLI fatal error: ${err}`);
+  } catch {
+  }
   process.exit(0);
 });
 /*! Bundled license information:

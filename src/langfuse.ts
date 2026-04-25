@@ -50,6 +50,42 @@ export async function shutdownClient(): Promise<void> {
   }
 }
 
+// ─── Score posting (for /feedback and /journey CLIs) ────────────────────────
+
+export interface PostScoreOptions {
+  /** Deterministic, idempotent score ID — Langfuse upserts on this key. */
+  id: string;
+  /** Score name (e.g. "turn_feedback" or "session_feedback"). */
+  name: string;
+  /** Numeric value (e.g. +1 / -1). */
+  value: number;
+  /** Optional comment shown in the Langfuse score detail. */
+  comment?: string;
+  /** Attach to a trace (turn-scope). Mutually exclusive with sessionId in practice. */
+  traceId?: string;
+  /** Attach to a session (session-scope). */
+  sessionId?: string;
+}
+
+/**
+ * Post a score to Langfuse. Idempotent on `id` — same id with new value/comment
+ * upserts the existing row.
+ */
+export function postScore(options: PostScoreOptions): void {
+  if (!client) {
+    logger.warn("Cannot post score: client not initialized");
+    return;
+  }
+  client.score({
+    id: options.id,
+    name: options.name,
+    value: options.value,
+    comment: options.comment,
+    traceId: options.traceId,
+    sessionId: options.sessionId,
+  });
+}
+
 // ─── Truncation ─────────────────────────────────────────────────────────────
 
 let maxChars = 50000;
@@ -247,7 +283,7 @@ export async function closeInterruptedTurn(options: {
   sessionState: SessionState;
   transcriptPath: string | undefined;
   config: { maxChars: number };
-}): Promise<{ lastLine: number; turnsTraced: number }> {
+}): Promise<{ lastLine: number; turnsTraced: number; finalizedTraceId?: string }> {
   const { sessionId, sessionState, transcriptPath, config } = options;
 
   if (!client) throw new Error("Langfuse client not initialized");
@@ -298,7 +334,13 @@ export async function closeInterruptedTurn(options: {
 
   await flushTraces();
 
-  return { lastLine, turnsTraced };
+  // ADR-008: interrupted turns count as substantive — caller writes this into
+  // last_substantive_trace_id so /feedback can target them.
+  return {
+    lastLine,
+    turnsTraced,
+    finalizedTraceId: turnsTraced > 0 ? sessionState.current_trace_id : undefined,
+  };
 }
 
 // ─── Subagent tracing ────────────────────────────────────────────────────────

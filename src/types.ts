@@ -166,6 +166,14 @@ export interface SessionState {
   updated: string;
   /** Current turn's Langfuse trace ID, set by UserPromptSubmit hook */
   current_trace_id?: string;
+  /**
+   * Most recent COMPLETED substantive turn's trace ID.
+   * - Written by Stop after a successful, non-feedback emission (ADR-002, ADR-003).
+   * - Written by closeInterruptedTurn (interrupted turns count as substantive — ADR-008).
+   * - Read by /feedback (target) and used as the gate for both /feedback and /journey (ADR-007).
+   * - Never points to a feedback-command turn (those skip trace allocation — ADR-002).
+   */
+  last_substantive_trace_id?: string;
   /** Current turn number (1-based), set by UserPromptSubmit for Stop to use */
   current_turn_number?: number;
   /** Current turn start time for duration calculation */
@@ -199,6 +207,21 @@ export interface SessionState {
   }>;
 }
 
+/**
+ * Top-level state shape (persisted to ~/.claude/state/langfuse_state.json).
+ *
+ * Session entries are keyed by session_id (UUID-shaped strings).
+ *
+ * Reserved underscore-prefixed keys hold non-session data:
+ *   - _active_by_cwd: maps absolute, realpath-resolved cwd → session_id
+ *     of the most recent UserPromptSubmit invocation in that cwd.
+ *     Read by slash command CLIs (/feedback, /journey) to find the active session.
+ *
+ * Direct indexing outside `state.ts` is unsafe — use the helper functions in
+ * `state.ts` (getSessionState, getActiveByCwd, setActiveByCwd, removeActiveByCwd)
+ * which handle the discrimination between session entries and reserved keys.
+ */
 export interface TracingState {
-  [sessionId: string]: SessionState;
+  _active_by_cwd?: Record<string, string>;
+  [sessionId: string]: SessionState | Record<string, string> | undefined;
 }
