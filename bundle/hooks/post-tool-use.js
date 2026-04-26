@@ -128,10 +128,19 @@ function loadConfig() {
 }
 
 // dist/utils/hook-init.js
+function shouldTrace(env) {
+  const trace = env.TRACE_TO_LANGFUSE?.toLowerCase().trim();
+  if (trace === "true")
+    return true;
+  if (trace === "false")
+    return false;
+  const policy = env.CC_LANGFUSE_TRACE_DEFAULT?.toLowerCase().trim();
+  return policy === "all";
+}
 function initHook() {
   const config = loadConfig();
   initLogger(config.debug);
-  if (process.env.TRACE_TO_LANGFUSE?.toLowerCase() !== "true") {
+  if (!shouldTrace(process.env)) {
     return null;
   }
   if (!config.publicKey || !config.secretKey) {

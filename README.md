@@ -51,24 +51,125 @@ Then run Claude Code with the plugin directory:
 claude --plugin-dir /path/to/langfuse-claude-code-plugin
 ```
 
-### 3. Configure environment variables
+### Configure environment variables
 
-```bash
-export TRACE_TO_LANGFUSE=true
-export LANGFUSE_PUBLIC_KEY=pk-lf-...
-export LANGFUSE_SECRET_KEY=sk-lf-...
+The plugin reads these env vars (full reference table below). Most users
+set credentials and Langfuse host once globally in `~/.claude/settings.json`,
+then control *which projects get traced* via the [two-knob model](#enabling-tracing-selectively)
+below. Shell exports also work if you prefer the per-shell-session pattern.
+
+Tracing is **off by default**. The plugin exits silently unless either:
+
+- `TRACE_TO_LANGFUSE=true` is set (typically in a project's `.claude/settings.json`), or
+- `CC_LANGFUSE_TRACE_DEFAULT=all` is set globally.
+
+See *Enabling tracing selectively* below for the recommended setup.
+
+| Variable                    | Default                             | Description                                                                                                                                       |
+| --------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TRACE_TO_LANGFUSE`         | (none)                              | Per-invocation override. `true` → trace; `false` → don't trace. Wins over the global default. See _Enabling tracing selectively_.                 |
+| `CC_LANGFUSE_TRACE_DEFAULT` | (none — opt-in)                     | Global default policy. `all` → trace by default unless a project opts out. Anything else / unset → opt-in (don't trace unless a project opts in). |
+| `CC_LANGFUSE_PUBLIC_KEY`    | falls back to `LANGFUSE_PUBLIC_KEY` | Langfuse public key                                                                                                                               |
+| `CC_LANGFUSE_SECRET_KEY`    | falls back to `LANGFUSE_SECRET_KEY` | Langfuse secret key                                                                                                                               |
+| `CC_LANGFUSE_BASE_URL`      | `https://cloud.langfuse.com`        | Langfuse API host (for self-hosted)                                                                                                               |
+| `CC_LANGFUSE_DEBUG`         | `false`                             | Enable debug logging                                                                                                                              |
+| `CC_LANGFUSE_MAX_CHARS`     | `50000`                             | Max characters before truncation                                                                                                                  |
+
+## Enabling tracing selectively
+
+The expectation is that you install the plugin once globally and then
+declare _per-project_ whether each project should be traced. Two env
+vars make that work; you only ever set them inside Claude Code's
+`settings.json` files.
+
+### The two-knob model
+
+| Knob                        | Where you typically set it        | Purpose                                                                                                                 |
+| --------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `CC_LANGFUSE_TRACE_DEFAULT` | `~/.claude/settings.json`         | **Global default policy** — `all` means "trace everything unless opted out", anything else / unset means "opt-in only". |
+| `TRACE_TO_LANGFUSE`         | `<project>/.claude/settings.json` | **Per-project override** — explicit `true` opts the project in, `false` opts it out. Wins over the global default.      |
+
+Decision rule used by every hook and slash command (first match wins):
+
+1. `TRACE_TO_LANGFUSE` is explicitly `true` → **trace**
+2. `TRACE_TO_LANGFUSE` is explicitly `false` → **don't trace**
+3. `CC_LANGFUSE_TRACE_DEFAULT` is `all` → **trace**
+4. otherwise → **don't trace**
+
+Per Claude Code's settings precedence, project-level `.claude/settings.json`
+env overrides global `~/.claude/settings.json` env on a per-key basis, so
+this composes cleanly without you needing to think about precedence rules.
+
+### Recommended setup — opt-in per project (safe default)
+
+Most users want tracing only for the projects they're actively analyzing.
+Set credentials globally so they're available when needed, but leave the
+default policy off:
+
+```jsonc
+// ~/.claude/settings.json
+{
+  "enabledPlugins": {
+    "langfuse-tracing@langfuse-claude-code-plugin": true,
+  },
+  "env": {
+    "CC_LANGFUSE_PUBLIC_KEY": "pk-lf-...",
+    "CC_LANGFUSE_SECRET_KEY": "sk-lf-...",
+    "CC_LANGFUSE_BASE_URL": "https://cloud.langfuse.com",
+  },
+}
 ```
 
-`TRACE_TO_LANGFUSE=true` is required to enable tracing. Without it, all hooks exit early.
+Then in each project you want traced, drop a one-liner that opts in:
 
-| Variable                 | Default                             | Description                         |
-| ------------------------ | ----------------------------------- | ----------------------------------- |
-| `TRACE_TO_LANGFUSE`      | (none)                              | Must be `true` to enable tracing    |
-| `CC_LANGFUSE_PUBLIC_KEY` | falls back to `LANGFUSE_PUBLIC_KEY` | Langfuse public key                 |
-| `CC_LANGFUSE_SECRET_KEY` | falls back to `LANGFUSE_SECRET_KEY` | Langfuse secret key                 |
-| `CC_LANGFUSE_BASE_URL`   | `https://cloud.langfuse.com`        | Langfuse API host (for self-hosted) |
-| `CC_LANGFUSE_DEBUG`      | `false`                             | Enable debug logging                |
-| `CC_LANGFUSE_MAX_CHARS`  | `50000`                             | Max characters before truncation    |
+```jsonc
+// <project>/.claude/settings.json
+{
+  "env": {
+    "TRACE_TO_LANGFUSE": "true",
+  },
+}
+```
+
+Sessions in projects without that line stay silent (no traces, no
+overhead, no surprises).
+
+### Alternative — trace everything, opt out per project
+
+If you'd rather log everything by default and only carve out exclusions:
+
+```jsonc
+// ~/.claude/settings.json
+{
+  "enabledPlugins": {
+    "langfuse-tracing@langfuse-claude-code-plugin": true,
+  },
+  "env": {
+    "CC_LANGFUSE_TRACE_DEFAULT": "all",
+    "CC_LANGFUSE_PUBLIC_KEY": "pk-lf-...",
+    "CC_LANGFUSE_SECRET_KEY": "sk-lf-...",
+  },
+}
+```
+
+Then opt specific projects out:
+
+```jsonc
+// <sensitive-project>/.claude/settings.json
+{
+  "env": {
+    "TRACE_TO_LANGFUSE": "false",
+  },
+}
+```
+
+### Where to keep secrets
+
+Don't commit `CC_LANGFUSE_SECRET_KEY` (or any other secret) into a
+project's `.claude/settings.json` if the project is shared. Use
+`.claude/settings.local.json` instead — Claude Code reads it with
+even higher precedence than `settings.json`, and the local file is
+git-ignored by default.
 
 ## Hook lifecycle
 
@@ -159,6 +260,27 @@ export CC_LANGFUSE_DEBUG=true
 # View logs
 tail -f ~/.claude/state/langfuse_hook.log
 ```
+
+## Migrating from v0.2.x to v0.3.0
+
+**What's new:** A two-knob model for selectively enabling tracing per project,
+without ever touching shell environment variables. See
+_Enabling tracing selectively_ above for the recommended setup.
+
+**Backward compatibility:** fully transparent. The v0.2.x kill-switch
+behaviour is rule 1 of the new decision matrix — if you have
+`TRACE_TO_LANGFUSE=true` exported in your shell or set globally in
+`~/.claude/settings.json`, every session continues to trace exactly as
+before. The new `CC_LANGFUSE_TRACE_DEFAULT` knob is opt-in: not setting
+it preserves the v0.2.x default of "trace only when `TRACE_TO_LANGFUSE`
+is explicitly true."
+
+**Recommended migration** for users currently relying on shell exports:
+move your env to `~/.claude/settings.json` so projects can override on
+a per-project basis. Drop `TRACE_TO_LANGFUSE=true` from your shell, and
+either (a) set `CC_LANGFUSE_TRACE_DEFAULT=all` globally to preserve the
+"trace everything" behaviour, or (b) leave it off and add
+`TRACE_TO_LANGFUSE=true` only to the projects you want traced.
 
 ## Migrating from v0.1.x to v0.2.0
 
