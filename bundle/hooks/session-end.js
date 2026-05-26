@@ -4392,6 +4392,7 @@ function emitTurn(options) {
     id: traceId || randomUUID(),
     name: traceName,
     sessionId,
+    userId: process.env.CC_LANGFUSE_USER_ID || void 0,
     input: { role: "user", content: userText },
     output: { role: "assistant", content: finalText },
     tags: ["claude-code"],
