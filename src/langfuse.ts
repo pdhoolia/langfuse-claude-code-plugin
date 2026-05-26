@@ -157,11 +157,17 @@ export function emitTurn(options: EmitTurnOptions): string {
       ? truncate(extractText(turn.llmCalls[turn.llmCalls.length - 1].content))
       : "";
 
-  // Create or update the trace (upsert if traceId provided)
+  // Create or update the trace (upsert if traceId provided).
+  // CC_LANGFUSE_USER_ID (optional) maps the trace to a human user in the
+  // Langfuse Users page — useful when the host app already knows its end-user
+  // identity (email, employee id, etc.) and Anthropic's account UUID isn't
+  // the right grouping. Falls through to undefined when unset, so the SDK
+  // omits the field and behavior is identical to the legacy code path.
   const trace = client.trace({
     id: traceId || randomUUID(),
     name: traceName,
     sessionId,
+    userId: process.env.CC_LANGFUSE_USER_ID || undefined,
     input: { role: "user", content: userText },
     output: { role: "assistant", content: finalText },
     tags: ["claude-code"],
