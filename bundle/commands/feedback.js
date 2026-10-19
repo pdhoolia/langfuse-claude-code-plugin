@@ -4132,6 +4132,7 @@ import { randomUUID } from "node:crypto";
 
 // dist/transcript.js
 import { readFileSync, statSync as statSync2, openSync, readSync, closeSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 var MAX_FULL_READ_BYTES = 50 * 1024 * 1024;
 
 // dist/langfuse.js
@@ -4210,7 +4211,8 @@ function computeScoreId(targetId, name) {
 import { realpathSync } from "node:fs";
 
 // dist/state.js
-import { readFileSync as readFileSync2, writeFileSync, mkdirSync as mkdirSync2, openSync as openSync2, closeSync as closeSync2, unlinkSync } from "node:fs";
+import { readFileSync as readFileSync2, writeFileSync, writeSync, mkdirSync as mkdirSync2, openSync as openSync2, closeSync as closeSync2, renameSync as renameSync2, statSync as statSync3, unlinkSync } from "node:fs";
+import { randomUUID as randomUUID2 } from "node:crypto";
 import { dirname as dirname2 } from "node:path";
 function loadState(stateFilePath) {
   try {

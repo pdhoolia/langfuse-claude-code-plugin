@@ -176,7 +176,7 @@ git-ignored by default.
 | Hook                 | When                       | What it does                                                                |
 | -------------------- | -------------------------- | --------------------------------------------------------------------------- |
 | **UserPromptSubmit** | User sends a prompt        | Creates the Langfuse trace eagerly; handles interrupted turn recovery       |
-| **PreToolUse**       | Before tool executes       | Records wall-clock start time in state                                      |
+| **PreToolUse**       | Before tool executes       | Records wall-clock start time in state (runs in the background)             |
 | **PostToolUse**      | After tool executes        | Records tool end time; for Agent tools, stores deferred creation info       |
 | **Stop**             | Agent finishes responding  | Reads transcript, builds turns, creates nested generation/tool observations |
 | **StopFailure**      | Turn ends due to API error | Updates trace with error status                                             |
@@ -188,13 +188,16 @@ git-ignored by default.
 ## How it works
 
 1. **UserPromptSubmit** creates a Langfuse trace eagerly (so it appears immediately) and stores the trace ID in session state.
-2. **PreToolUse** records tool start times for accurate timing.
+2. **PreToolUse** records tool start times for accurate timing. It runs with `"async": true`, so the
+   tool call does not wait for it — the plugin never uses the hook's blocking or permission fields.
 3. The **Stop** hook reads new lines from the JSONL transcript (line-number tracking), groups messages into turns, and creates nested observations:
    - One **generation** per LLM API call (not one per turn)
    - Tool **spans** nested under their parent generation
    - Streaming chunks with the same `message.id` merged into a single generation
 4. **SubagentStop** queues subagent transcript paths; **Stop** reads and traces them.
-5. State is persisted to `~/.claude/state/langfuse_state.json` with atomic file locking.
+5. State is persisted to `~/.claude/state/langfuse_state.json` with atomic file locking. A hook that
+   cannot take the lock skips its state update rather than writing over another hook's — a hook must
+   never block or fail the session.
 
 ## Recording feedback
 

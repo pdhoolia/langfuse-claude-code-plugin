@@ -2,6 +2,7 @@
 
 // dist/transcript.js
 import { readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 var MAX_FULL_READ_BYTES = 50 * 1024 * 1024;
 function readTranscript(filePath, afterLine = -1) {
   let size;
@@ -30,6 +31,7 @@ function readTranscript(filePath, afterLine = -1) {
   try {
     const chunkSize = 2 * 1024 * 1024;
     const buf = Buffer.alloc(chunkSize);
+    const decoder = new StringDecoder("utf8");
     const messages = [];
     let lastLine = afterLine;
     let lineIndex = -1;
@@ -37,7 +39,7 @@ function readTranscript(filePath, afterLine = -1) {
     let bytesRead;
     let pos = 0;
     while ((bytesRead = readSync(fd, buf, 0, chunkSize, pos)) > 0) {
-      const chunk = partial + buf.toString("utf-8", 0, bytesRead);
+      const chunk = partial + decoder.write(buf.subarray(0, bytesRead));
       partial = "";
       const lines = chunk.split("\n");
       partial = lines.pop() ?? "";
@@ -56,6 +58,7 @@ function readTranscript(filePath, afterLine = -1) {
       }
       pos += bytesRead;
     }
+    partial += decoder.end();
     if (partial.trim() !== "") {
       lineIndex++;
       lastLine = lineIndex;
@@ -74,15 +77,16 @@ function readTranscript(filePath, afterLine = -1) {
 function isHumanMessage(msg) {
   if (msg.type !== "user")
     return false;
-  if (typeof msg.message.content === "string")
+  const content = msg.message?.content;
+  if (typeof content === "string")
     return true;
-  if (Array.isArray(msg.message.content)) {
-    return !msg.message.content.some((b) => b.type === "tool_result");
+  if (Array.isArray(content)) {
+    return !content.some((b) => b.type === "tool_result");
   }
   return false;
 }
 function isToolResult(msg) {
-  if (msg.type !== "user" || !Array.isArray(msg.message.content))
+  if (msg.type !== "user" || !Array.isArray(msg.message?.content))
     return false;
   return msg.message.content.some((b) => b.type === "tool_result");
 }
@@ -198,6 +202,7 @@ function groupIntoTurns(messages) {
     turns.push({
       userContent: currentUser.message.content,
       userTimestamp: currentUser.timestamp,
+      userUuid: currentUser.uuid,
       llmCalls,
       isComplete
     });
@@ -276,47 +281,92 @@ function debug(message) {
 }
 
 // dist/state.js
-import { readFileSync as readFileSync2, writeFileSync, mkdirSync as mkdirSync2, openSync as openSync2, closeSync as closeSync2, unlinkSync } from "node:fs";
+import { readFileSync as readFileSync2, writeFileSync, writeSync, mkdirSync as mkdirSync2, openSync as openSync2, closeSync as closeSync2, renameSync as renameSync2, statSync as statSync3, unlinkSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname as dirname2 } from "node:path";
 var LOCK_TIMEOUT_MS = 5e3;
 var LOCK_RETRY_MS = 20;
+var LOCK_STALE_MS = 3e4;
 function lockPath(stateFilePath) {
   return `${stateFilePath}.lock`;
 }
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-async function acquireLock(stateFilePath) {
-  const lock = lockPath(stateFilePath);
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-  mkdirSync2(dirname2(stateFilePath), { recursive: true });
-  while (Date.now() < deadline) {
-    try {
-      const fd = openSync2(lock, "wx");
-      closeSync2(fd);
-      return;
-    } catch {
-      await sleep(LOCK_RETRY_MS);
-    }
+function newOwnerToken() {
+  return `${process.pid}:${randomUUID()}`;
+}
+function tryCreateLock(lock, owner) {
+  let fd;
+  try {
+    fd = openSync2(lock, "wx");
+  } catch {
+    return false;
   }
   try {
+    writeSync(fd, owner);
+  } catch {
+  } finally {
+    closeSync2(fd);
+  }
+  return true;
+}
+function isLockStale(lock, now) {
+  try {
+    return now - statSync3(lock).mtimeMs > LOCK_STALE_MS;
+  } catch {
+    return false;
+  }
+}
+function dropStaleLock(lock) {
+  const aside = `${lock}.stale.${process.pid}.${Date.now()}`;
+  try {
+    renameSync2(lock, aside);
+  } catch {
+    return;
+  }
+  try {
+    unlinkSync(aside);
+  } catch {
+  }
+}
+async function acquireLock(stateFilePath) {
+  const lock = lockPath(stateFilePath);
+  const owner = newOwnerToken();
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  mkdirSync2(dirname2(stateFilePath), { recursive: true });
+  for (; ; ) {
+    if (tryCreateLock(lock, owner))
+      return owner;
+    if (isLockStale(lock, Date.now())) {
+      dropStaleLock(lock);
+      if (tryCreateLock(lock, owner))
+        return owner;
+    }
+    if (Date.now() >= deadline)
+      return null;
+    await sleep(LOCK_RETRY_MS);
+  }
+}
+function releaseLock(stateFilePath, owner) {
+  const lock = lockPath(stateFilePath);
+  try {
+    if (readFileSync2(lock, "utf-8").trim() !== owner)
+      return;
     unlinkSync(lock);
   } catch {
   }
 }
-function releaseLock(stateFilePath) {
-  try {
-    unlinkSync(lockPath(stateFilePath));
-  } catch {
-  }
-}
 async function atomicUpdateState(stateFilePath, fn) {
-  await acquireLock(stateFilePath);
+  const owner = await acquireLock(stateFilePath);
+  if (!owner)
+    return false;
   try {
     const state = loadState(stateFilePath);
     writeFileSync(stateFilePath, JSON.stringify(fn(state), null, 2));
+    return true;
   } finally {
-    releaseLock(stateFilePath);
+    releaseLock(stateFilePath, owner);
   }
 }
 function loadState(stateFilePath) {
@@ -4428,7 +4478,7 @@ var LangfuseSingleton = class _LangfuseSingleton {
 LangfuseSingleton.instance = null;
 
 // dist/langfuse.js
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 var client = null;
 function initClient(publicKey, secretKey, baseUrl) {
   client = new Langfuse({ publicKey, secretKey, baseUrl });
@@ -4476,26 +4526,116 @@ function truncateValue(v) {
   }
   return v;
 }
-function buildUsage(usage) {
+function buildCacheWriteDetails(usage) {
+  const details = {};
+  const split = usage.cache_creation;
+  if (split) {
+    if (typeof split.ephemeral_5m_input_tokens === "number" && split.ephemeral_5m_input_tokens > 0) {
+      details.input_cache_creation_5m = split.ephemeral_5m_input_tokens;
+    }
+    if (typeof split.ephemeral_1h_input_tokens === "number" && split.ephemeral_1h_input_tokens > 0) {
+      details.input_cache_creation_1h = split.ephemeral_1h_input_tokens;
+    }
+  }
+  if (Object.keys(details).length > 0)
+    return details;
+  const flat = usage.cache_creation_input_tokens;
+  if (typeof flat === "number" && flat > 0) {
+    return { cache_creation_input_tokens: flat };
+  }
+  return {};
+}
+function buildUsageDetails(usage) {
   const details = {};
   if (usage.input_tokens > 0)
     details.input = usage.input_tokens;
   if (usage.output_tokens > 0)
     details.output = usage.output_tokens;
-  if (usage.input_tokens > 0 || usage.output_tokens > 0) {
-    details.total = (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0);
+  if (usage.cache_read_input_tokens && usage.cache_read_input_tokens > 0) {
+    details.cache_read_input_tokens = usage.cache_read_input_tokens;
   }
+  Object.assign(details, buildCacheWriteDetails(usage));
   return Object.keys(details).length > 0 ? details : void 0;
 }
+function buildAssistantMessage(llm) {
+  const message = { role: "assistant", content: truncate(extractText(llm.content)) };
+  const thinking = extractThinking(llm.content);
+  if (thinking)
+    message.thinking = truncate(thinking);
+  if (llm.toolCalls.length > 0) {
+    message.tool_calls = llm.toolCalls.map((tc) => ({
+      id: tc.tool_use.id,
+      type: "function",
+      function: { name: tc.tool_use.name }
+    }));
+  }
+  return message;
+}
+function buildToolResultMessage(llm) {
+  const results = [];
+  for (const tc of llm.toolCalls) {
+    if (!tc.result)
+      continue;
+    results.push({
+      tool_use_id: tc.tool_use.id,
+      tool_name: tc.tool_use.name,
+      output: truncateValue(tc.result.content)
+    });
+  }
+  return results.length > 0 ? { role: "tool", tool_results: results } : void 0;
+}
+function turnUserText(turn) {
+  return typeof turn.userContent === "string" ? truncate(turn.userContent) : JSON.stringify(turn.userContent);
+}
+function buildTurnHistoryMessages(turn) {
+  const messages = [{ role: "user", content: turnUserText(turn) }];
+  for (const llm of turn.llmCalls) {
+    messages.push(buildAssistantMessage(llm));
+    const toolMessage = buildToolResultMessage(llm);
+    if (toolMessage)
+      messages.push(toolMessage);
+  }
+  return messages;
+}
+function turnKey(turn) {
+  return turn.userUuid ?? turn.userTimestamp;
+}
+function buildSessionHistory(transcriptPath) {
+  try {
+    const { messages } = readTranscript(transcriptPath, -1);
+    if (messages.length === 0)
+      return void 0;
+    const history = { messages: [], startIndexByTurnKey: /* @__PURE__ */ new Map() };
+    for (const turn of groupIntoTurns(messages)) {
+      const key = turnKey(turn);
+      if (!history.startIndexByTurnKey.has(key)) {
+        history.startIndexByTurnKey.set(key, history.messages.length);
+      }
+      history.messages.push(...buildTurnHistoryMessages(turn));
+    }
+    return history;
+  } catch (err) {
+    debug(`Could not build session history from ${transcriptPath}: ${err}`);
+    return void 0;
+  }
+}
+function historyPrefixForTurn(history, turn) {
+  if (!history)
+    return [];
+  const startIndex = history.startIndexByTurnKey.get(turnKey(turn));
+  if (startIndex === void 0)
+    return [];
+  return history.messages.slice(0, startIndex);
+}
 function emitTurn(options) {
-  const { sessionId, turnNum, turn, transcriptName, traceId, toolStartTimes } = options;
+  const { sessionId, turnNum, turn, transcriptName, traceId, toolStartTimes, historyPrefix } = options;
   if (!client)
     throw new Error("Langfuse client not initialized \u2014 call initClient() first");
   const traceName = `Claude Code - Turn ${turnNum}`;
-  const userText = typeof turn.userContent === "string" ? truncate(turn.userContent) : JSON.stringify(turn.userContent);
+  const userText = turnUserText(turn);
   const finalText = turn.llmCalls.length > 0 ? truncate(extractText(turn.llmCalls[turn.llmCalls.length - 1].content)) : "";
   const trace = client.trace({
-    id: traceId || randomUUID(),
+    id: traceId || randomUUID2(),
     name: traceName,
     sessionId,
     input: { role: "user", content: userText },
@@ -4508,37 +4648,40 @@ function emitTurn(options) {
       is_complete: turn.isComplete
     }
   });
-  for (let i = 0; i < turn.llmCalls.length; i++) {
-    emitLLMCall(trace, i + 1, turn.llmCalls.length, turn.llmCalls[i], userText, toolStartTimes);
-  }
+  emitLLMCalls(trace, turn, historyPrefix, toolStartTimes);
   return trace.id;
 }
-function emitLLMCall(trace, index, total, llm, userText, toolStartTimes) {
-  const genName = total > 1 ? `LLM Call ${index}/${total}` : "Claude Response";
-  const text = truncate(extractText(llm.content));
-  const thinking = extractThinking(llm.content);
-  const output = { role: "assistant", text };
-  if (thinking)
-    output.thinking = truncate(thinking);
-  if (llm.toolCalls.length > 0) {
-    output.tool_calls = llm.toolCalls.map((tc) => ({
-      name: tc.tool_use.name,
-      id: tc.tool_use.id
-    }));
+function emitLLMCalls(parent, turn, historyPrefix, toolStartTimes) {
+  const history = [...historyPrefix ?? []];
+  history.push({ role: "user", content: turnUserText(turn) });
+  for (let i = 0; i < turn.llmCalls.length; i++) {
+    const llm = turn.llmCalls[i];
+    const assistantMessage = emitLLMCall(parent, i + 1, turn.llmCalls.length, llm, [...history], toolStartTimes);
+    history.push(assistantMessage);
+    const toolMessage = buildToolResultMessage(llm);
+    if (toolMessage)
+      history.push(toolMessage);
   }
-  const usage = buildUsage(llm.usage);
+}
+function emitLLMCall(trace, index, total, llm, input, toolStartTimes) {
+  const genName = total > 1 ? `LLM Call ${index}/${total}` : "Claude Response";
+  const output = buildAssistantMessage(llm);
+  const thinking = output.thinking;
+  const usageDetails = buildUsageDetails(llm.usage);
   const gen = trace.generation({
     name: genName,
     model: llm.model,
-    input: { role: "user", content: userText },
+    input,
     output,
-    usage,
+    usageDetails,
     metadata: {
+      history_messages: input.length,
       stop_reason: llm.stopReason ?? "",
       timestamp: llm.endTime,
       has_thinking: String(!!thinking),
       ...llm.usage.cache_read_input_tokens ? { cache_read_input_tokens: llm.usage.cache_read_input_tokens } : {},
       ...llm.usage.cache_creation_input_tokens ? { cache_creation_input_tokens: llm.usage.cache_creation_input_tokens } : {},
+      ...llm.usage.cache_creation ? { cache_creation: llm.usage.cache_creation } : {},
       ...llm.synthetic ? { synthetic: true } : {}
     },
     startTime: new Date(llm.startTime),
@@ -4548,6 +4691,7 @@ function emitLLMCall(trace, index, total, llm, userText, toolStartTimes) {
     emitTool(gen, tc, toolStartTimes);
   }
   gen.end();
+  return output;
 }
 function emitTool(parent, tc, toolStartTimes) {
   const toolInput = truncateValue(tc.tool_use.input);
@@ -4616,9 +4760,10 @@ function tracePendingSubagents(options) {
           turns: subagentTurns.length
         }
       });
+      const subagentHistory = [];
       for (let i = 0; i < subagentTurns.length; i++) {
         const turn = subagentTurns[i];
-        const userText = typeof turn.userContent === "string" ? truncate(turn.userContent) : JSON.stringify(turn.userContent);
+        const userText = turnUserText(turn);
         const finalText = turn.llmCalls.length > 0 ? truncate(extractText(turn.llmCalls[turn.llmCalls.length - 1].content)) : "";
         const turnSpan = subagentSpan.span({
           name: `Subagent Turn ${i + 1}`,
@@ -4626,9 +4771,8 @@ function tracePendingSubagents(options) {
           output: { role: "assistant", content: finalText },
           metadata: { turn_number: i + 1 }
         });
-        for (let j = 0; j < turn.llmCalls.length; j++) {
-          emitLLMCall(turnSpan, j + 1, turn.llmCalls.length, turn.llmCalls[j], userText);
-        }
+        emitLLMCalls(turnSpan, turn, [...subagentHistory]);
+        subagentHistory.push(...buildTurnHistoryMessages(turn));
         turnSpan.end();
       }
       subagentSpan.end();
@@ -4768,6 +4912,7 @@ async function main() {
   let tracedTurns = 0;
   const currentTraceId = sessionState.current_trace_id;
   const transcriptName = transcriptPath.split("/").pop() ?? "";
+  const sessionHistory = buildSessionHistory(transcriptPath);
   for (let i = 0; i < turns.length; i++) {
     const turn = turns[i];
     const isLastTurn = i === turns.length - 1;
@@ -4780,7 +4925,8 @@ async function main() {
         turn,
         transcriptName,
         traceId,
-        toolStartTimes: isLastTurn ? sessionState.tool_start_times : void 0
+        toolStartTimes: isLastTurn ? sessionState.tool_start_times : void 0,
+        historyPrefix: historyPrefixForTurn(sessionHistory, turn)
       });
       tracedTurns++;
     } catch (err) {

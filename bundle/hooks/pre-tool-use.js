@@ -38,47 +38,92 @@ function debug(message) {
 }
 
 // dist/state.js
-import { readFileSync, writeFileSync, mkdirSync as mkdirSync2, openSync, closeSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, writeSync, mkdirSync as mkdirSync2, openSync, closeSync, renameSync as renameSync2, statSync as statSync2, unlinkSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname as dirname2 } from "node:path";
 var LOCK_TIMEOUT_MS = 5e3;
 var LOCK_RETRY_MS = 20;
+var LOCK_STALE_MS = 3e4;
 function lockPath(stateFilePath) {
   return `${stateFilePath}.lock`;
 }
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-async function acquireLock(stateFilePath) {
-  const lock = lockPath(stateFilePath);
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-  mkdirSync2(dirname2(stateFilePath), { recursive: true });
-  while (Date.now() < deadline) {
-    try {
-      const fd = openSync(lock, "wx");
-      closeSync(fd);
-      return;
-    } catch {
-      await sleep(LOCK_RETRY_MS);
-    }
+function newOwnerToken() {
+  return `${process.pid}:${randomUUID()}`;
+}
+function tryCreateLock(lock, owner) {
+  let fd;
+  try {
+    fd = openSync(lock, "wx");
+  } catch {
+    return false;
   }
   try {
+    writeSync(fd, owner);
+  } catch {
+  } finally {
+    closeSync(fd);
+  }
+  return true;
+}
+function isLockStale(lock, now) {
+  try {
+    return now - statSync2(lock).mtimeMs > LOCK_STALE_MS;
+  } catch {
+    return false;
+  }
+}
+function dropStaleLock(lock) {
+  const aside = `${lock}.stale.${process.pid}.${Date.now()}`;
+  try {
+    renameSync2(lock, aside);
+  } catch {
+    return;
+  }
+  try {
+    unlinkSync(aside);
+  } catch {
+  }
+}
+async function acquireLock(stateFilePath) {
+  const lock = lockPath(stateFilePath);
+  const owner = newOwnerToken();
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  mkdirSync2(dirname2(stateFilePath), { recursive: true });
+  for (; ; ) {
+    if (tryCreateLock(lock, owner))
+      return owner;
+    if (isLockStale(lock, Date.now())) {
+      dropStaleLock(lock);
+      if (tryCreateLock(lock, owner))
+        return owner;
+    }
+    if (Date.now() >= deadline)
+      return null;
+    await sleep(LOCK_RETRY_MS);
+  }
+}
+function releaseLock(stateFilePath, owner) {
+  const lock = lockPath(stateFilePath);
+  try {
+    if (readFileSync(lock, "utf-8").trim() !== owner)
+      return;
     unlinkSync(lock);
   } catch {
   }
 }
-function releaseLock(stateFilePath) {
-  try {
-    unlinkSync(lockPath(stateFilePath));
-  } catch {
-  }
-}
 async function atomicUpdateState(stateFilePath, fn) {
-  await acquireLock(stateFilePath);
+  const owner = await acquireLock(stateFilePath);
+  if (!owner)
+    return false;
   try {
     const state = loadState(stateFilePath);
     writeFileSync(stateFilePath, JSON.stringify(fn(state), null, 2));
+    return true;
   } finally {
-    releaseLock(stateFilePath);
+    releaseLock(stateFilePath, owner);
   }
 }
 function loadState(stateFilePath) {
@@ -172,7 +217,7 @@ async function main() {
     return;
   const startTime = Date.now();
   debug(`PreToolUse hook: tool=${input.tool_name}, id=${input.tool_use_id}`);
-  await atomicUpdateState(config.stateFilePath, (state) => {
+  const written = await atomicUpdateState(config.stateFilePath, (state) => {
     const ss = getSessionState(state, input.session_id);
     return {
       ...state,
@@ -185,6 +230,9 @@ async function main() {
       }
     };
   });
+  if (!written) {
+    debug(`PreToolUse hook: state locked, skipped start time for ${input.tool_use_id}`);
+  }
 }
 main().catch((err) => {
   try {

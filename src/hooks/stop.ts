@@ -17,6 +17,8 @@ import {
   initClient,
   setMaxChars,
   emitTurn,
+  buildSessionHistory,
+  historyPrefixForTurn,
   tracePendingSubagents,
   flushTraces,
   shutdownClient,
@@ -123,6 +125,11 @@ async function main(): Promise<void> {
   const currentTraceId = sessionState.current_trace_id;
   const transcriptName = transcriptPath.split("/").pop() ?? "";
 
+  // One full read of the transcript gives every turn emitted here its
+  // conversation prefix: the incremental cursor only knows what was exported,
+  // while a generation input needs every earlier message.
+  const sessionHistory = buildSessionHistory(transcriptPath);
+
   for (let i = 0; i < turns.length; i++) {
     const turn = turns[i];
     const isLastTurn = i === turns.length - 1;
@@ -139,6 +146,7 @@ async function main(): Promise<void> {
         transcriptName,
         traceId,
         toolStartTimes: isLastTurn ? sessionState.tool_start_times : undefined,
+        historyPrefix: historyPrefixForTurn(sessionHistory, turn),
       });
       tracedTurns++;
     } catch (err) {
