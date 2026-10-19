@@ -69,6 +69,15 @@ export interface Usage {
   output_tokens: number;
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
+  /**
+   * Cache-write tokens split by cache lifetime. Recent Anthropic responses
+   * carry it; the flat `cache_creation_input_tokens` is the fallback and says
+   * nothing about the lifetime, so it is priced at the cheaper rate.
+   */
+  cache_creation?: {
+    ephemeral_5m_input_tokens?: number;
+    ephemeral_1h_input_tokens?: number;
+  };
 }
 
 /** A user message (human input) in the transcript. */
@@ -80,6 +89,8 @@ export interface UserMessage {
   };
   timestamp: string;
   promptId?: string;
+  /** Row identity, written by Claude Code. Keys a turn in the session history. */
+  uuid?: string;
 }
 
 /** A tool result message in the transcript (also role: "user"). */
@@ -149,10 +160,43 @@ export interface LLMCall {
   synthetic?: boolean;
 }
 
+// ─── ChatML conversation history ───────────────────────────────────────────
+
+/**
+ * A tool call in the shape Langfuse renders. The nested `function` object is
+ * required — a flat id and name pair stays raw JSON in the trace UI.
+ */
+export interface ChatToolCall {
+  id: string;
+  type: "function";
+  function: { name: string };
+}
+
+/** One tool result carried by a `role: "tool"` history message. */
+export interface ChatToolResult {
+  tool_use_id: string;
+  tool_name: string;
+  output: unknown;
+}
+
+/**
+ * One ChatML message. A generation's input is a list of these: the
+ * conversation as the model saw it at that point.
+ */
+export interface ChatMessage {
+  role: "user" | "assistant" | "tool";
+  content?: string;
+  thinking?: string;
+  tool_calls?: ChatToolCall[];
+  tool_results?: ChatToolResult[];
+}
+
 /** A complete turn: one user prompt → one or more LLM calls. */
 export interface Turn {
   userContent: string | Array<Record<string, unknown>>;
   userTimestamp: string;
+  /** The user row's uuid, when the transcript carries one. */
+  userUuid?: string;
   llmCalls: LLMCall[];
   /** Whether the turn is complete (has stop_reason: "end_turn"). */
   isComplete: boolean;

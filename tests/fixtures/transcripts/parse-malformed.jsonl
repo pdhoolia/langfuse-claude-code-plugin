@@ -1,0 +1,5 @@
+{"type":"user","timestamp":"2026-01-01T00:04:00.000Z","uuid":"u1","promptId":"prompt-1","message":{"role":"user","content":"Line zero."}}
+this is not json
+
+{"type":"file-history-snapshot","messageId":"snap-1","snapshot":{}}
+{"type":"assistant","timestamp":"2026-01-01T00:04:01.000Z","uuid":"a1","promptId":"prompt-1","message":{"id":"msg-1","role":"assistant","model":"claude-sonnet-4-5-20250929","content":[{"type":"text","text":"Line four."}],"usage":{"input_tokens":5,"output_tokens":2},"stop_reason":"end_turn"}}

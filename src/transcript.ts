@@ -7,6 +7,7 @@
  */
 
 import { readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import type {
   TranscriptMessage,
   AssistantMessage,
@@ -65,6 +66,10 @@ export function readTranscript(
   try {
     const chunkSize = 2 * 1024 * 1024; // 2 MB
     const buf = Buffer.alloc(chunkSize);
+    // A UTF-8 sequence can straddle a chunk boundary. StringDecoder holds the
+    // incomplete trailing bytes back for the next chunk instead of decoding
+    // them to replacement characters, which would silently alter traced text.
+    const decoder = new StringDecoder("utf8");
     const messages: TranscriptMessage[] = [];
     let lastLine = afterLine;
     let lineIndex = -1;
@@ -73,7 +78,7 @@ export function readTranscript(
     let pos = 0;
 
     while ((bytesRead = readSync(fd, buf, 0, chunkSize, pos)) > 0) {
-      const chunk = partial + buf.toString("utf-8", 0, bytesRead);
+      const chunk = partial + decoder.write(buf.subarray(0, bytesRead));
       partial = "";
       const lines = chunk.split("\n");
 
@@ -94,6 +99,9 @@ export function readTranscript(
       }
       pos += bytesRead;
     }
+
+    // Flush any bytes the decoder still holds from a truncated final sequence.
+    partial += decoder.end();
 
     // Handle final partial line (if file doesn't end with newline).
     if (partial.trim() !== "") {
@@ -164,16 +172,20 @@ export function getTranscriptEndLine(filePath: string): number {
 /** Check if a message is a human user prompt. */
 export function isHumanMessage(msg: TranscriptMessage): msg is UserMessage {
   if (msg.type !== "user") return false;
-  if (typeof msg.message.content === "string") return true;
-  if (Array.isArray(msg.message.content)) {
-    return !msg.message.content.some((b: { type: string }) => b.type === "tool_result");
+  // Claude Code writes several row types that carry no `message` at all. None
+  // uses type "user" today, so read it defensively rather than throwing and
+  // taking the whole hook down if that changes.
+  const content = msg.message?.content;
+  if (typeof content === "string") return true;
+  if (Array.isArray(content)) {
+    return !content.some((b: { type: string }) => b.type === "tool_result");
   }
   return false;
 }
 
 /** Check if a message is a tool result. */
 export function isToolResult(msg: TranscriptMessage): msg is ToolResultMessage {
-  if (msg.type !== "user" || !Array.isArray(msg.message.content)) return false;
+  if (msg.type !== "user" || !Array.isArray(msg.message?.content)) return false;
   return msg.message.content.some((b: { type: string }) => b.type === "tool_result");
 }
 
@@ -355,6 +367,7 @@ export function groupIntoTurns(messages: TranscriptMessage[]): Turn[] {
     turns.push({
       userContent: currentUser.message.content as string | Array<Record<string, unknown>>,
       userTimestamp: currentUser.timestamp,
+      userUuid: currentUser.uuid,
       llmCalls,
       isComplete,
     });

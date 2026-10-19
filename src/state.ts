@@ -7,14 +7,34 @@
  * Record<cwd, sessionId> (the slash-command lookup map — ADR-006).
  */
 
-import { readFileSync, writeFileSync, mkdirSync, openSync, closeSync, unlinkSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  writeSync,
+  mkdirSync,
+  openSync,
+  closeSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+} from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import type { TracingState, SessionState } from "./types.js";
 
 // ─── Atomic read-modify-write ────────────────────────────────────────────────
 
+/** How long a caller waits for the lock before giving up on the update. */
 const LOCK_TIMEOUT_MS = 5_000;
 const LOCK_RETRY_MS = 20;
+
+/**
+ * How old a lock file has to be before it is treated as abandoned. The
+ * critical section is one read plus one write of a small JSON file, so a
+ * lock that has been held this long belongs to a process that died (or was
+ * killed by a hook timeout) without releasing it.
+ */
+const LOCK_STALE_MS = 30_000;
 
 function lockPath(stateFilePath: string): string {
   return `${stateFilePath}.lock`;
@@ -24,31 +44,103 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function acquireLock(stateFilePath: string): Promise<void> {
-  const lock = lockPath(stateFilePath);
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-  mkdirSync(dirname(stateFilePath), { recursive: true });
-  while (Date.now() < deadline) {
-    try {
-      // O_EXCL | O_CREAT: fails atomically if the file already exists.
-      const fd = openSync(lock, "wx");
-      closeSync(fd);
-      return;
-    } catch {
-      await sleep(LOCK_RETRY_MS);
-    }
-  }
-  // Stale lock — remove it and proceed rather than deadlocking.
+/**
+ * The token written into the lock file by whoever created it: the owning pid
+ * (so an abandoned lock says which process left it) plus a per-acquisition
+ * uuid (so two acquisitions from the same process are still distinguishable).
+ */
+function newOwnerToken(): string {
+  return `${process.pid}:${randomUUID()}`;
+}
+
+/**
+ * Create the lock file exclusively and stamp the owner into it.
+ * Returns false if someone else holds it — never throws.
+ */
+function tryCreateLock(lock: string, owner: string): boolean {
+  let fd: number;
   try {
-    unlinkSync(lock);
+    // O_EXCL | O_CREAT: fails atomically if the file already exists.
+    fd = openSync(lock, "wx");
+  } catch {
+    return false;
+  }
+  try {
+    writeSync(fd, owner);
+  } catch {
+    /* the lock is held either way; the stamp is only for diagnosis */
+  } finally {
+    closeSync(fd);
+  }
+  return true;
+}
+
+/** Has the lock file been sitting there longer than a real critical section? */
+function isLockStale(lock: string, now: number): boolean {
+  try {
+    return now - statSync(lock).mtimeMs > LOCK_STALE_MS;
+  } catch {
+    // Gone between the failed create and this check — not stale, just free.
+    return false;
+  }
+}
+
+/**
+ * Remove a lock judged stale, by renaming it aside first. Rename is atomic:
+ * if two processes both judge the same lock stale, only one rename finds the
+ * file, so the loser cannot go on to delete the winner's fresh lock.
+ */
+function dropStaleLock(lock: string): void {
+  const aside = `${lock}.stale.${process.pid}.${Date.now()}`;
+  try {
+    renameSync(lock, aside);
+  } catch {
+    return; // lost the race, or the holder released it first
+  }
+  try {
+    unlinkSync(aside);
   } catch {
     /* ignore */
   }
 }
 
-function releaseLock(stateFilePath: string): void {
+/**
+ * Wait for the lock and take it. Returns the owner token on success, or null
+ * if the lock could not be taken within `LOCK_TIMEOUT_MS` — in which case the
+ * caller does NOT hold the lock and must not enter the critical section.
+ */
+async function acquireLock(stateFilePath: string): Promise<string | null> {
+  const lock = lockPath(stateFilePath);
+  const owner = newOwnerToken();
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  mkdirSync(dirname(stateFilePath), { recursive: true });
+
+  for (;;) {
+    if (tryCreateLock(lock, owner)) return owner;
+
+    // A lock old enough to be abandoned is dropped and then re-attempted.
+    // The re-attempt is what decides: if it fails (another waiter got there
+    // first), we keep waiting rather than pretending to hold the lock.
+    if (isLockStale(lock, Date.now())) {
+      dropStaleLock(lock);
+      if (tryCreateLock(lock, owner)) return owner;
+    }
+
+    if (Date.now() >= deadline) return null;
+    await sleep(LOCK_RETRY_MS);
+  }
+}
+
+/**
+ * Release the lock, but only if it is still the one we took. A holder that
+ * overran `LOCK_STALE_MS` and had its lock stolen must not delete the lock
+ * its successor now holds.
+ */
+function releaseLock(stateFilePath: string, owner: string): void {
+  const lock = lockPath(stateFilePath);
   try {
-    unlinkSync(lockPath(stateFilePath));
+    if (readFileSync(lock, "utf-8").trim() !== owner) return;
+    unlinkSync(lock);
   } catch {
     /* ignore */
   }
@@ -57,17 +149,25 @@ function releaseLock(stateFilePath: string): void {
 /**
  * Atomically read state, apply `fn`, and write the result back.
  * A file lock prevents concurrent hooks from clobbering each other.
+ *
+ * Returns true if the update was written, false if the lock could not be
+ * taken and the update was skipped. Every caller is a hook that must not
+ * block or fail visibly, so skipping is the intended degradation — a lost
+ * timestamp costs accuracy, a half-written state file costs the session.
+ * Callers may ignore the result; those that care can log the skip.
  */
 export async function atomicUpdateState(
   stateFilePath: string,
   fn: (state: TracingState) => TracingState,
-): Promise<void> {
-  await acquireLock(stateFilePath);
+): Promise<boolean> {
+  const owner = await acquireLock(stateFilePath);
+  if (!owner) return false;
   try {
     const state = loadState(stateFilePath);
     writeFileSync(stateFilePath, JSON.stringify(fn(state), null, 2));
+    return true;
   } finally {
-    releaseLock(stateFilePath);
+    releaseLock(stateFilePath, owner);
   }
 }
 
